@@ -1,5 +1,7 @@
 # AgentForge
 
+**Repository:** [github.com/vgandhi1/agent-forge](https://github.com/vgandhi1/agent-forge)
+
 Multi-agent pipeline (CEO, PM, Architect, Backend, QA, DevOps) that writes artifacts under `workspace/`.
 
 ## Environment & package manager (uv)

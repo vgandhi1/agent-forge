@@ -1,6 +1,8 @@
 # GitHub repository: `agent-forge`
 
-Use this when creating the repo and filling the **About** section on GitHub.
+**Live repo:** https://github.com/vgandhi1/agent-forge  
+
+Description and topics were applied via `gh repo edit`; re-run the commands below if you change them.
 
 ## Public or private?
 
@@ -87,7 +89,7 @@ Leave blank, or set to your future docs site.
 2. Locally:
 
    ```bash
-   git remote add origin https://github.com/YOUR_USER/agent-forge.git
+   git remote add origin https://github.com/vgandhi1/agent-forge.git
    git branch -M main
    git push -u origin main
    ```
