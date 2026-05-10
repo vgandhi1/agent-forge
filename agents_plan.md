@@ -23,7 +23,7 @@ Four core modules:
 
 | Agent | Role | Artifacts Produced |
 |-------|------|--------------------|
-| **CEO** | Orchestrates all agents, reviews and approves artifacts, enforces phase gates | Sprint decisions, approval records |
+| **Lead** | Orchestrates all agents, reviews and approves artifacts, enforces phase gates | Sprint decisions, approval records |
 | **Product Manager** | Writes requirements docs, user stories, API overviews | `workspace/docs/requirements.md` |
 | **Software Architect** | Designs system architecture, DB schema, API contracts | `workspace/docs/architecture.md` |
 | **Backend Developer** | Implements FastAPI app (models, schemas, routers, services) | `workspace/dailyease/` (20+ files) |
@@ -32,18 +32,41 @@ Four core modules:
 
 ### Communication Model
 ```
-CEO (orchestrator)
+Lead (orchestrator)
   │
-  ├─► PM          TASK_ASSIGN ──► [work] ──► TASK_COMPLETE ──► CEO reviews
+  ├─► PM          TASK_ASSIGN ──► [work] ──► TASK_COMPLETE ──► Lead reviews
   ├─► Architect   (phase-gated: PM must be approved first)
   ├─► Backend     (depends on approved architecture)
   ├─► QA          (reviews backend implementation)
   └─► DevOps      (deploys QA-approved code)
 
 Approval loop (per agent):
-  CEO sends TASK_ASSIGN ──► Agent produces artifact ──► TASK_COMPLETE
-  CEO reviews ──► ARTIFACT_APPROVED or ARTIFACT_REJECTED (with revision notes)
+  Lead sends TASK_ASSIGN ──► Agent produces artifact ──► TASK_COMPLETE
+  Lead reviews ──► ARTIFACT_APPROVED or ARTIFACT_REJECTED (with revision notes)
   Up to 3 revision cycles before acceptance
+```
+
+### Message bus (implementation)
+
+- **Mailbox:** Each role has an `asyncio.PriorityQueue`. Lower numeric `priority` is dequeued first (typical: Lead control messages `1`, worker completions `2`).
+- **Stable ordering:** Ties use a monotonic sequence on publish (not `Message.__lt__`), so heap order is predictable.
+- **Shutdown:** Workers stop when they receive `MessageType.SHUTDOWN`.
+- **IDs:** Every message has a `message_id`; `correlation_id` is reserved for linking replies (e.g. future consult flow).
+- **Audit:** Each `publish` is appended to SQLite `message_log` (large payloads are truncated for storage).
+
+### Lead ↔ workers (sequence overview)
+
+```mermaid
+sequenceDiagram
+    participant Lead
+    participant Bus
+    participant Worker
+    Lead->>Bus: TASK_ASSIGN to role
+    Bus->>Worker: dequeue (mailbox)
+    Worker->>Bus: TASK_COMPLETE
+    Bus->>Lead: dequeue (lead mailbox)
+    Lead->>Bus: ARTIFACT_APPROVED or ARTIFACT_REJECTED
+    Bus->>Worker: dequeue
 ```
 
 ### Directory Structure
@@ -54,10 +77,15 @@ agents/
 ├── tui_main.py               # Textual TUI (buttons + streamed subprocess logs)
 ├── web_ui.py                 # Local browser UI (FastAPI + WebSocket, loopback)
 ├── USAGE.md                  # Step-by-step: CLI, TUI, web UI, presets
+├── CHANGELOG.md              # User-facing release notes (omit internal-only refactors)
+├── improvement.md            # Backlog / shipped improvements
+├── tests/                    # pytest (CLI, artifact_store, message_bus)
 ├── pyproject.toml            # dependencies + [tool.uv]; `agentforge` script
 ├── uv.lock                   # locked versions for `uv sync`
 ├── requirements.txt          # pip mirror of deps (optional if using uv)
-├── README.md                 # uv + env quickstart
+├── README.md                 # uv + env quickstart; CI badge
+├── LICENSE                   # MIT
+├── .github/workflows/ci.yml  # pytest on push / PR
 ├── .env.example              # config template (copy to `.env`)
 ├── agents_plan.md            # this file
 │
@@ -71,7 +99,7 @@ agents/
 │
 ├── agents/
 │   ├── base_agent.py         # BaseAgent: Anthropic SDK + prompt caching + memory
-│   ├── ceo.py                # CEOAgent: orchestrator + phase gates + reviews
+│   ├── lead.py               # LeadAgent: orchestrator + phase gates + reviews
 │   ├── product_manager.py    # ProductManagerAgent: requirements docs
 │   ├── architect.py          # ArchitectAgent: architecture design
 │   ├── backend_developer.py  # BackendDeveloperAgent: FastAPI implementation
@@ -116,22 +144,22 @@ Tools are sorted deterministically by name so the tools block is always byte-ide
 (unsorted tools would invalidate the cache on every call).
 
 ### Phase Gate Enforcement
-The CEO enforces strict sequential phases:
+The Lead enforces strict sequential phases:
 1. PM requirements approved → unlock architect
 2. Architecture approved → unlock backend developer
 3. Backend implementation approved → unlock QA
 4. QA approved → unlock DevOps
 
-No agent starts until its dependency is approved by the CEO. This mirrors a real
+No agent starts until its dependency is approved by the Lead. This mirrors a real
 engineering organization's stage-gate review process.
 
 ### Persistent Memory
 `AgentMemory` (aiosqlite) stores per-agent context across restarts:
 - `artifact_ref`: paths to files each agent has written
-- `decision`: strategic/technical decisions recorded by the CEO
+- `decision`: strategic/technical decisions recorded by the Lead
 - `context`: general sprint state
 
-The CEO uses `recall_cross_role()` to read other agents' artifact refs for review.
+The Lead uses `recall_cross_role()` to read other agents' artifact refs for review.
 
 ---
 
@@ -228,6 +256,7 @@ python main.py --dry-run
 | `AGENTFORGE_MODEL` | `claude-sonnet-4-6` | Model for all agents |
 | `AGENTFORGE_THINKING` | `false` | Enable extended thinking |
 | `AGENTFORGE_THINKING_BUDGET` | `8000` | Token budget for thinking |
+| `AGENTFORGE_API_RETRIES` | `4` | Retries for rate limits, timeouts, connection errors, HTTP 5xx on Anthropic |
 | `UV_ENV_FILE` | (unset) | Optional: path passed to `uv run` so variables load from that file |
 
 ### Upgrade to Opus 4.7
@@ -253,6 +282,9 @@ echo "AGENTFORGE_THINKING=true" >> .env
 - [x] Textual TUI (`--tui`) for local terminal use alongside Claude Code
 - [x] Local browser UI (`--web`, FastAPI + WebSocket, loopback by default) and `USAGE.md`
 - [x] QA runs `pytest` locally and retries fixes on failure
+- [x] `message_log` persistence on publish; CLI `--goal-file` validation; `--verbose` / `--log-file`
+- [x] Anthropic retries (rate limit, timeout, connection, 5xx); TUI cancel (`c`); web UI error `code`s
+- [x] Unit tests for CLI phases, artifact paths, message bus (`tests/` + `uv sync --group dev`)
 
 ### Phase 2 — Product Quality
 - [ ] Add web search tool so agents can look up latest API docs
@@ -276,7 +308,7 @@ echo "AGENTFORGE_THINKING=true" >> .env
 | No agent communication design | AsyncIO message bus with priority queues |
 | No LLM integration | Anthropic SDK with prompt caching |
 | No artifact system | ArtifactStore writes real code to workspace/ |
-| No quality gates | CEO approval loop with revision cycles |
+| No quality gates | Lead approval loop with revision cycles |
 | No persistence | SQLite memory per agent role |
 | No concrete product | DailyEase FastAPI app (4 modules, 20+ files) |
 | Aspirational | Runnable: `uv run python main.py` or `python main.py` |

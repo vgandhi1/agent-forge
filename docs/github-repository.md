@@ -27,7 +27,7 @@ agent-forge
 ### Short description (repository subtitle — one line)
 
 ```
-Multi-agent software team (CEO, PM, architect, backend, QA, DevOps) orchestrated with Claude—CLI, TUI, and local web UI. FastAPI artifacts, pytest, uv.
+Multi-agent software team (Lead, PM, architect, backend, QA, DevOps) orchestrated with Claude—CLI, TUI, and local web UI. FastAPI artifacts, pytest, uv.
 ```
 
 ### Topics (add under “About” → gear icon → Topics)
@@ -69,10 +69,10 @@ Leave blank, or set to your future docs site.
 
    ```bash
    # Public
-   gh repo create agent-forge --public --source=. --remote=origin --description "Multi-agent software team (CEO, PM, architect, backend, QA, DevOps) orchestrated with Claude—CLI, TUI, and local web UI. FastAPI artifacts, pytest, uv." --push
+   gh repo create agent-forge --public --source=. --remote=origin --description "Multi-agent software team (Lead, PM, architect, backend, QA, DevOps) orchestrated with Claude—CLI, TUI, and local web UI. FastAPI artifacts, pytest, uv." --push
 
    # Private
-   gh repo create agent-forge --private --source=. --remote=origin --description "Multi-agent software team (CEO, PM, architect, backend, QA, DevOps) orchestrated with Claude—CLI, TUI, and local web UI. FastAPI artifacts, pytest, uv." --push
+   gh repo create agent-forge --private --source=. --remote=origin --description "Multi-agent software team (Lead, PM, architect, backend, QA, DevOps) orchestrated with Claude—CLI, TUI, and local web UI. FastAPI artifacts, pytest, uv." --push
    ```
 
 3. Add topics (UI or CLI):

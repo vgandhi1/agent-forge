@@ -1,6 +1,11 @@
 import asyncio
+import logging
 from collections import defaultdict
+
+from .memory import log_bus_message
 from .message_types import Message
+
+logger = logging.getLogger("agentforge.bus")
 
 
 class MessageBus:
@@ -19,6 +24,14 @@ class MessageBus:
         self._seq += 1
         # Tie-break on seq so heap ordering is stable (never compare Message objects)
         item = (message.priority, self._seq, message)
+        await log_bus_message(message)
+        logger.debug(
+            "publish type=%s %s→%s id=%s",
+            message.type.value,
+            message.sender,
+            message.recipient,
+            message.message_id[:8],
+        )
         if message.recipient == "broadcast":
             for role in self._subscribers:
                 await self._queues[role].put(item)

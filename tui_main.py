@@ -17,6 +17,8 @@ REPO_ROOT = Path(__file__).resolve().parent
 
 
 class AgentForgeTui(App[None]):
+    """Terminal UI; press c to cancel the running subprocess."""
+
     CSS = """
     Screen { align: center middle; }
     #main { width: 100%; height: 100%; padding: 1 2; }
@@ -30,7 +32,12 @@ class AgentForgeTui(App[None]):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("ctrl+c", "quit", "Quit"),
+        ("c", "cancel_run", "Cancel run"),
     ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._child_proc: asyncio.subprocess.Process | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -49,10 +56,19 @@ class AgentForgeTui(App[None]):
             yield RichLog(id="log", highlight=True, markup=True)
             yield Static(
                 "Runs the same CLI as Claude Code / terminal: Python subprocess, Rich logs here. "
-                "Requires ANTHROPIC_API_KEY in the environment or .env next to main.py.",
+                "Requires ANTHROPIC_API_KEY in the environment or .env next to main.py. "
+                "Press c to cancel a running job.",
                 id="hint",
             )
         yield Footer()
+
+    def action_cancel_run(self) -> None:
+        proc = self._child_proc
+        if proc is None or proc.returncode is not None:
+            return
+        proc.kill()
+        log = self.query_one(RichLog)
+        log.write("[yellow]Cancelled — subprocess killed.[/yellow]")
 
     def on_mount(self) -> None:
         self.query_one("#goal_input", Input).value = os.environ.get("AGENTFORGE_DEFAULT_GOAL", "").strip()
@@ -81,7 +97,7 @@ class AgentForgeTui(App[None]):
     async def run_subprocess(self, preset: str, goal: str) -> None:
         log = self.query_one(RichLog)
         log.clear()
-        log.write(f"[cyan]Starting preset=[/cyan][bold]{preset}[/bold] …")
+        log.write(f"[cyan]Starting preset=[/cyan][bold]{preset}[/bold] … [dim](c = cancel)[/dim]")
 
         main_py = REPO_ROOT / "main.py"
         if not main_py.is_file():
@@ -111,6 +127,7 @@ class AgentForgeTui(App[None]):
             stderr=asyncio.subprocess.STDOUT,
             env=env,
         )
+        self._child_proc = proc
 
         assert proc.stdout is not None
         code = -1
@@ -126,12 +143,20 @@ class AgentForgeTui(App[None]):
 
             code = await proc.wait()
         finally:
+            self._child_proc = None
             try:
                 os.unlink(goal_path)
             except OSError:
                 pass
         if code == 0:
             log.write("[green]Done.[/green] Use CLI --list-artifacts or open workspace/ for outputs.")
+        elif code < 0:
+            log.write(f"[yellow]Process ended with signal {-code} (may have been cancelled).[/yellow]")
+        elif code == 1:
+            log.write(
+                "[red]Exited with code 1.[/red] Common causes: missing [bold]ANTHROPIC_API_KEY[/bold] "
+                "(copy .env.example → .env), or an API / agent error — scroll up for details."
+            )
         else:
             log.write(f"[red]Exited with code {code}[/red]")
 

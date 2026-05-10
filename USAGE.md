@@ -1,6 +1,6 @@
 # AgentForge — how to use the agent team
 
-AgentForge runs a **CEO-led team** of AI agents (Product Manager, Architect, Backend, QA, DevOps) that read and write files under `workspace/`. You can drive it from:
+AgentForge runs a **Lead-orchestrated team** of AI agents (Product Manager, Architect, Backend, QA, DevOps) that read and write files under `workspace/`. You can drive it from:
 
 | Interface | What it is | Best for |
 |-----------|------------|----------|
@@ -104,6 +104,10 @@ Your cwd should be the **repository root**. With **uv**, prefer `uv run python �
 | Custom agent order | `python main.py --phases pm,qa --goal "…"` | `uv run python main.py --phases pm,qa --goal "…"` |
 | Show config (no API calls) | `python main.py --dry-run` | `uv run python main.py --dry-run` |
 | List generated files | `python main.py --list-artifacts` | `uv run python main.py --list-artifacts` |
+| Debug logging | `python main.py -v --dry-run` | `uv run python main.py -v --dry-run` |
+| Log file | `python main.py -v --log-file ./run.log` | `uv run python main.py -v --log-file ./run.log` |
+
+`--goal-file` must point to an **existing regular file**; otherwise the CLI exits with code `2` and a short error (no traceback).
 
 ### Presets (which agents run)
 
@@ -143,7 +147,8 @@ uv run python main.py --tui
 1. Type your **sprint goal** in the input (multi-line is OK).  
 2. Press a **preset** button (Full, Intake, Design, etc.).  
 3. Watch the **log** panel; it runs the same `main.py` subprocess as the CLI.  
-4. Press **q** to quit the TUI (the run continues until the subprocess finishes).
+4. Press **q** to quit the TUI (the run continues until the subprocess finishes).  
+5. Press **c** to **cancel** the running subprocess (kill).
 
 The TUI writes your goal to a temporary file and invokes `--goal-file`, so special characters and newlines are safe.
 
@@ -196,4 +201,11 @@ uv run python main.py --list-artifacts
 | `pytest` fails in **test** preset | Run `implement` or `full` first so `workspace/dailyease` exists; install that app’s `requirements.txt` into the venv if needed |
 | Web UI won’t connect | Open `127.0.0.1` and the port from `--web-port` |
 
-For architecture details (message bus, CEO approvals, caching), see `agents_plan.md`.
+### Tests (development)
+
+```bash
+uv sync --group dev
+uv run pytest
+```
+
+For architecture details (message bus, Lead approvals, caching), see `agents_plan.md`.

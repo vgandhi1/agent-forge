@@ -4,8 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentforge"
-version = "0.2.0"
+version = "0.2.3"
 description = "Multi-agent intake, design, implementation, QA, and DevOps orchestration"
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40.0",
@@ -18,8 +20,20 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.25.0"]
+
 [project.scripts]
 agentforge = "cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.25.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.setuptools]
 packages = ["core", "agents"]

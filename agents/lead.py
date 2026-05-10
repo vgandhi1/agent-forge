@@ -1,4 +1,4 @@
-import asyncio
+import logging
 from rich.panel import Panel
 from rich.text import Text
 
@@ -82,13 +82,16 @@ _DELEGATION_TOOLS = [
     },
 ]
 
-class CEOAgent(BaseAgent):
+_lead_log = logging.getLogger("agentforge.lead")
+
+
+class LeadAgent(BaseAgent):
     def __init__(self, role: str, bus: MessageBus, artifact_store: ArtifactStore, console) -> None:
         super().__init__(role, bus, artifact_store, console)
         self._approved_artifacts: dict[str, str] = {}
 
     async def run(self) -> None:
-        pass  # CEO is driven by run_development_cycle, not the message loop
+        pass  # Lead is driven by run_development_cycle, not the message loop
 
     async def run_development_cycle(
         self,
@@ -115,6 +118,7 @@ class CEOAgent(BaseAgent):
 
     async def _run_phase(self, agent_role: str, phase_description: str, goal: str) -> None:
         self.console.rule(f"[bold yellow]Phase: {agent_role.upper()}[/bold yellow]")
+        _lead_log.info("phase_start role=%s", agent_role)
 
         context = await self._build_dynamic_context()
         context += f"\n\n## Sprint Goal\n{goal}"
@@ -149,11 +153,11 @@ class CEOAgent(BaseAgent):
         task_payload["approved_artifacts"] = dict(self._approved_artifacts)
         task_payload["sprint_goal"] = goal
 
-        self.console.log(f"[cyan]CEO → {agent_role}:[/cyan] {task_payload.get('deliverable', '')}")
+        self.console.log(f"[cyan]Lead → {agent_role}:[/cyan] {task_payload.get('deliverable', '')}")
 
         await self.bus.publish(Message(
             type=MessageType.TASK_ASSIGN,
-            sender="ceo",
+            sender="lead",
             recipient=agent_role,
             payload=task_payload,
             priority=1,
@@ -162,7 +166,7 @@ class CEOAgent(BaseAgent):
         max_revisions = 3
         revision = 0
         while revision < max_revisions:
-            result_msg = await self.bus.receive("ceo", timeout=600.0)
+            result_msg = await self.bus.receive("lead", timeout=600.0)
             if result_msg is None:
                 self.console.log(f"[red]Timeout waiting for {agent_role}[/red]")
                 break
@@ -192,7 +196,7 @@ class CEOAgent(BaseAgent):
                 await self.memory.remember(f"{agent_role}_artifact", artifact_path, "artifact_ref")
                 await self.bus.publish(Message(
                     type=MessageType.ARTIFACT_APPROVED,
-                    sender="ceo",
+                    sender="lead",
                     recipient=agent_role,
                     payload={
                         "agent": agent_role,
@@ -205,14 +209,13 @@ class CEOAgent(BaseAgent):
                 break
 
             self.console.log(f"[yellow]Revision {revision} requested for {agent_role}[/yellow]")
-            # Agent handles ARTIFACT_REJECTED and sends another TASK_COMPLETE; loop receives it
 
     async def _review_artifact(self, agent_role: str, artifact: dict, attempt: int) -> bool:
         artifact_path = artifact.get("primary_path", artifact.get("path", ""))
         files_written = artifact.get("files", [])
         summary = artifact.get("summary", "")
 
-        self.console.log(f"[cyan]CEO reviewing {agent_role} artifact: {summary}[/cyan]")
+        self.console.log(f"[cyan]Lead reviewing {agent_role} artifact: {summary}[/cyan]")
 
         content_preview = ""
         if artifact_path:
@@ -253,7 +256,7 @@ class CEOAgent(BaseAgent):
             tool_used = True
             await self.bus.publish(Message(
                 type=MessageType.ARTIFACT_REJECTED,
-                sender="ceo",
+                sender="lead",
                 recipient=agent_role,
                 payload=reject_calls[-1],
                 priority=1,
@@ -263,7 +266,7 @@ class CEOAgent(BaseAgent):
             tool_used = True
             await self.bus.publish(Message(
                 type=MessageType.ARTIFACT_APPROVED,
-                sender="ceo",
+                sender="lead",
                 recipient=agent_role,
                 payload=approve_calls[-1],
                 priority=1,
@@ -273,7 +276,7 @@ class CEOAgent(BaseAgent):
             approved = True
             await self.bus.publish(Message(
                 type=MessageType.ARTIFACT_APPROVED,
-                sender="ceo",
+                sender="lead",
                 recipient=agent_role,
                 payload={"agent": agent_role, "artifact_name": artifact_path, "approval_notes": "Accepted"},
                 priority=1,

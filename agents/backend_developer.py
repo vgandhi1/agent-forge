@@ -104,7 +104,7 @@ class BackendDeveloperAgent(BaseAgent):
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,
             sender=self.role,
-            recipient="ceo",
+            recipient="lead",
             payload={
                 "files": written_files,
                 "primary_path": primary_path,
@@ -146,7 +146,7 @@ class BackendDeveloperAgent(BaseAgent):
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,
             sender=self.role,
-            recipient="ceo",
+            recipient="lead",
             payload={
                 "files": written_files,
                 "primary_path": "dailyease/main.py",

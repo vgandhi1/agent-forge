@@ -137,7 +137,7 @@ class QAEngineerAgent(BaseAgent):
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,
             sender=self.role,
-            recipient="ceo",
+            recipient="lead",
             payload={
                 "files": written_files,
                 "primary_path": primary_path,
@@ -177,7 +177,7 @@ class QAEngineerAgent(BaseAgent):
         _, pytest_out = await self._run_pytest()
 
         user_message = (
-            f"Revise tests and QA report per CEO feedback:\n{notes}\n\n"
+                f"Revise tests and QA report per Lead feedback:\n{notes}\n\n"
             f"Current QA report:\n```markdown\n{report[:4000]}\n```\n\n"
             f"Latest pytest output:\n```\n{pytest_out[:6000]}\n```\n\n"
             f"Apply write_file to any files that need changes."
@@ -187,7 +187,7 @@ class QAEngineerAgent(BaseAgent):
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,
             sender=self.role,
-            recipient="ceo",
+            recipient="lead",
             payload={
                 "files": written_files,
                 "primary_path": primary_path,

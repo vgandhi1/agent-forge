@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 class MessageType(str, Enum):
@@ -24,7 +24,7 @@ class Message:
     payload: dict
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     correlation_id: str | None = None
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     priority: int = 5
 
     def __lt__(self, other: "Message") -> bool:

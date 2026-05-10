@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 from pathlib import Path
@@ -19,6 +20,37 @@ from core.paths import ROOT, WORKSPACE
 from core.phases import DEFAULT_PHASES, PHASE_PRESETS, VALID_ROLES
 
 load_dotenv()
+
+
+def _configure_runtime_logging(verbose: bool, log_file: Path | None) -> None:
+    root = logging.getLogger()
+    root.handlers.clear()
+    level = logging.DEBUG if verbose else logging.INFO
+    root.setLevel(level)
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    sh = logging.StreamHandler(sys.stderr)
+    sh.setFormatter(fmt)
+    root.addHandler(sh)
+    if log_file is not None:
+        fh = logging.FileHandler(log_file, encoding="utf-8")
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+
+
+def _load_goal_file(path: Path, console: Console) -> str:
+    if not path.exists():
+        console.print(f"[red]Error: --goal-file path does not exist: {path}[/red]")
+        raise SystemExit(2)
+    if not path.is_file():
+        console.print(f"[red]Error: --goal-file must be a regular file: {path}[/red]")
+        raise SystemExit(2)
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as e:
+        err = e.strerror or type(e).__name__
+        console.print(f"[red]Error: cannot read --goal-file ({err}). Check permissions.[/red]")
+        raise SystemExit(2) from e
+
 
 DEFAULT_GOAL = """
 Build the MVP of DailyEase — a daily life management platform impacting millions of users.
@@ -35,13 +67,13 @@ Target: 100k+ concurrent users, sub-200ms API response time
 
 
 def _resolve_phases(preset: str | None, phases_csv: str | None) -> list[tuple[str, str]] | None:
-    """Return phase list for CEO, or None to use DEFAULT_PHASES."""
+    """Return phase list for the Lead orchestrator, or None to use DEFAULT_PHASES."""
     if phases_csv:
         roles = [p.strip() for p in phases_csv.split(",") if p.strip()]
         for r in roles:
             if r not in VALID_ROLES:
                 raise SystemExit(f"Unknown role in --phases: {r!r}. Valid: {', '.join(VALID_ROLES)}")
-        desc = "Execute this role per the sprint goal and CEO task assignment."
+        desc = "Execute this role per the sprint goal and Lead task assignment."
         return [(r, desc) for r in roles]
 
     key = (preset or "full").lower()
@@ -98,7 +130,7 @@ async def _run_cycle(goal: str, phases: list[tuple[str, str]] | None, skip_summa
     from core.memory import init_db
     from core.message_bus import MessageBus
     from core.artifact_store import ArtifactStore
-    from agents.ceo import CEOAgent
+    from agents.lead import LeadAgent
     from agents.product_manager import ProductManagerAgent
     from agents.architect import ArchitectAgent
     from agents.backend_developer import BackendDeveloperAgent
@@ -112,7 +144,7 @@ async def _run_cycle(goal: str, phases: list[tuple[str, str]] | None, skip_summa
     store = ArtifactStore()
 
     agents_map = {
-        "ceo": CEOAgent("ceo", bus, store, console),
+        "lead": LeadAgent("lead", bus, store, console),
         "pm": ProductManagerAgent("pm", bus, store, console),
         "architect": ArchitectAgent("architect", bus, store, console),
         "backend": BackendDeveloperAgent("backend", bus, store, console),
@@ -123,16 +155,16 @@ async def _run_cycle(goal: str, phases: list[tuple[str, str]] | None, skip_summa
     worker_tasks = [
         asyncio.create_task(agent.run(), name=role)
         for role, agent in agents_map.items()
-        if role != "ceo"
+        if role != "lead"
     ]
 
     try:
-        await agents_map["ceo"].run_development_cycle(goal, phases=phases)
+        await agents_map["lead"].run_development_cycle(goal, phases=phases)
     finally:
         for role in ["pm", "architect", "backend", "qa", "devops"]:
             await bus.publish(Message(
                 type=MessageType.SHUTDOWN,
-                sender="ceo",
+                sender="lead",
                 recipient=role,
                 payload={},
                 priority=1,
@@ -210,9 +242,24 @@ def main() -> None:
         action="store_true",
         help="Skip artifact table at end (for scripted / TUI subprocess runs)",
     )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable debug logging to stderr (agentforge loggers)",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=None,
+        help="Append logs to this file (UTF-8), in addition to stderr when used with --verbose",
+    )
 
     args = parser.parse_args()
     console = Console()
+
+    if args.verbose or args.log_file is not None:
+        _configure_runtime_logging(bool(args.verbose), args.log_file)
+        logging.getLogger("agentforge").setLevel(logging.DEBUG if args.verbose else logging.INFO)
 
     if args.tui:
         from tui_main import launch_tui
@@ -242,7 +289,7 @@ def main() -> None:
 
     goal_text = args.goal
     if args.goal_file is not None:
-        goal_text = args.goal_file.read_text(encoding="utf-8")
+        goal_text = _load_goal_file(args.goal_file.resolve(), console)
 
     phases = _resolve_phases(args.preset, args.phases)
 

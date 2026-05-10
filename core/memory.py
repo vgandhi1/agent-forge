@@ -2,7 +2,36 @@ import aiosqlite
 import json
 from typing import Any
 
+from .message_types import Message
 from .paths import DB_PATH
+
+
+def _payload_json(payload: dict) -> str:
+    s = json.dumps(payload, default=str)
+    if len(s) > 50_000:
+        return s[:50_000] + "…(truncated)"
+    return s
+
+
+async def log_bus_message(message: Message) -> None:
+    """Append one row to message_log (audit trail). Best-effort; failures are ignored by callers."""
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                """INSERT INTO message_log (message_id, type, sender, recipient, payload, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    message.message_id,
+                    message.type.value,
+                    message.sender,
+                    message.recipient,
+                    _payload_json(message.payload),
+                    message.timestamp,
+                ),
+            )
+            await db.commit()
+    except Exception:
+        pass
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS agent_memory (
@@ -64,7 +93,7 @@ class AgentMemory:
                 return {r[0]: json.loads(r[1]) for r in rows}
 
     async def recall_cross_role(self, other_role: str, key: str, memory_type: str = "artifact_ref") -> Any | None:
-        """CEO can read other agents' artifact refs to load content for review."""
+        """Lead can read other agents' artifact refs to load content for review."""
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
                 "SELECT value FROM agent_memory WHERE agent_role=? AND memory_type=? AND key=?",

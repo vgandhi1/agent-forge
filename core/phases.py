@@ -1,4 +1,4 @@
-"""Pipeline phase definitions for CLI presets and the CEO orchestrator."""
+"""Pipeline phase definitions for CLI presets and the Lead orchestrator."""
 
 from __future__ import annotations
 

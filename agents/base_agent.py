@@ -1,10 +1,13 @@
-import os
+import asyncio
 import json
+import logging
+import os
+import random
 from abc import ABC, abstractmethod
 from typing import Any
 
 import anthropic
-from anthropic import AsyncAnthropic
+from anthropic import APIConnectionError, APIStatusError, APITimeoutError, AsyncAnthropic, RateLimitError
 from rich.console import Console
 
 from core.message_bus import MessageBus
@@ -15,10 +18,13 @@ from core.artifact_store import ArtifactStore
 MODEL = os.getenv("AGENTFORGE_MODEL", "claude-sonnet-4-6")
 USE_THINKING = os.getenv("AGENTFORGE_THINKING", "false").lower() == "true"
 THINKING_BUDGET = int(os.getenv("AGENTFORGE_THINKING_BUDGET", "8000"))
+MAX_API_RETRIES = max(1, int(os.getenv("AGENTFORGE_API_RETRIES", "4")))
+
+_log = logging.getLogger("agentforge.agent")
 
 SYSTEM_PROMPTS: dict[str, str] = {
-    "ceo": """You are the CEO and Chief Orchestrator of AgentForge — a software company
-building DailyEase, a daily life management platform that will impact millions of users
+    "lead": """You are the Lead Orchestrator for AgentForge — the principal technical lead coordinating
+a software team building DailyEase, a daily life management platform that will impact millions of users
 by simplifying their day-to-day activities.
 
 Your team:
@@ -246,19 +252,45 @@ class BaseAgent(ABC):
         if USE_THINKING:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": THINKING_BUDGET}
 
-        response = await self.client.messages.create(**kwargs)
+        last_err: BaseException | None = None
+        for attempt in range(MAX_API_RETRIES):
+            try:
+                response = await self.client.messages.create(**kwargs)
+                usage = response.usage
+                cache_info = ""
+                if hasattr(usage, "cache_read_input_tokens"):
+                    cache_info = (
+                        f" [cache_read={usage.cache_read_input_tokens} "
+                        f"cache_write={getattr(usage, 'cache_creation_input_tokens', 0)} "
+                        f"live={usage.input_tokens}]"
+                    )
+                if attempt > 0:
+                    _log.info("anthropic call succeeded after retry role=%s attempt=%s", self.role, attempt)
+                self.console.log(f"[dim cyan]{self.role}[/dim cyan] completed call{cache_info}")
+                return response
+            except RateLimitError as e:
+                last_err = e
+                _log.warning("rate_limit role=%s attempt=%s/%s", self.role, attempt + 1, MAX_API_RETRIES)
+                await asyncio.sleep(min(90.0, (2**attempt) + random.uniform(0, 0.5)))
+            except APIConnectionError as e:
+                last_err = e
+                _log.warning("connection_error role=%s attempt=%s", self.role, attempt + 1)
+                await asyncio.sleep(min(30.0, (2**attempt) + random.uniform(0, 0.5)))
+            except APITimeoutError as e:
+                last_err = e
+                _log.warning("timeout role=%s attempt=%s", self.role, attempt + 1)
+                await asyncio.sleep(min(30.0, (2**attempt) + random.uniform(0, 0.5)))
+            except APIStatusError as e:
+                last_err = e
+                code = getattr(e, "status_code", None)
+                if code is not None and code >= 500:
+                    _log.warning("server_error status=%s role=%s attempt=%s", code, self.role, attempt + 1)
+                    await asyncio.sleep(min(30.0, (2**attempt) + random.uniform(0, 0.5)))
+                    continue
+                raise
 
-        usage = response.usage
-        cache_info = ""
-        if hasattr(usage, "cache_read_input_tokens"):
-            cache_info = (
-                f" [cache_read={usage.cache_read_input_tokens} "
-                f"cache_write={getattr(usage, 'cache_creation_input_tokens', 0)} "
-                f"live={usage.input_tokens}]"
-            )
-
-        self.console.log(f"[dim cyan]{self.role}[/dim cyan] completed call{cache_info}")
-        return response
+        assert last_err is not None
+        raise last_err
 
     async def _build_dynamic_context(self) -> str:
         decisions = await self.memory.recall_all("decision")
