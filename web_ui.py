@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 import uvicorn
 
 from core.phases import PHASE_PRESETS
@@ -26,6 +26,12 @@ MAIN_PY = REPO_ROOT / "main.py"
 ALLOWED_PRESETS = frozenset(["full", *PHASE_PRESETS.keys()])
 MAX_GOAL_CHARS = 500_000
 
+# Browsers request /favicon.ico by default; serve SVG at both paths (Content-Type: image/svg+xml).
+_FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="7" fill="#0e1116"/>
+  <path fill="#e8a54b" d="M9 22 16 10l7 12h-5v4h-6v-4H9Z"/>
+</svg>"""
+
 _INDEX_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -33,6 +39,8 @@ _INDEX_HTML = """<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="color-scheme" content="dark"/>
   <title>AgentForge</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"/>
+  <link rel="alternate icon" href="/favicon.ico"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet"/>
@@ -447,6 +455,20 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
         return _INDEX_HTML
+
+    @app.get("/favicon.svg", response_class=Response)
+    async def favicon_svg() -> Response:
+        return Response(
+            content=_FAVICON_SVG.encode("utf-8"),
+            media_type="image/svg+xml",
+        )
+
+    @app.get("/favicon.ico", response_class=Response)
+    async def favicon_ico() -> Response:
+        return Response(
+            content=_FAVICON_SVG.encode("utf-8"),
+            media_type="image/svg+xml",
+        )
 
     @app.websocket("/ws/run")
     async def run_ws(websocket: WebSocket) -> None:
