@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentforge"
+version = "0.2.0"
+description = "Multi-agent intake, design, implementation, QA, and DevOps orchestration"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40.0",
+    "aiosqlite>=0.20.0",
+    "pydantic>=2.0.0",
+    "rich>=13.7.0",
+    "python-dotenv>=1.0.0",
+    "textual>=0.79.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+]
+
+[project.scripts]
+agentforge = "cli:main"
+
+[tool.setuptools]
+packages = ["core", "agents"]
+py-modules = ["cli", "tui_main", "main", "web_ui"]
+
+# Use Astral uv for the virtualenv + locked installs: `uv sync`, then `uv run python main.py …`
+# See USAGE.md and https://docs.astral.sh/uv/
+[tool.uv]
+package = true

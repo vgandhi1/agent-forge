@@ -1,0 +1,12 @@
+.venv/
+# Generated sprint output (keep directory in git)
+workspace/**
+!workspace/.gitkeep
+
+__pycache__/
+*.py[cod]
+.env
+agentforge.db
+*.egg-info/
+dist/
+build/
