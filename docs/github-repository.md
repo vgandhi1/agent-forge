@@ -19,6 +19,8 @@ Description and topics were applied via `gh repo edit`; re-run the commands belo
 
 ## Fields to copy into GitHub
 
+Keep the **repository About** (description, website, social links) **technical and product-focused**. Do **not** add personal bios, job titles such as **CEO**, founder pitches, or other individual or company-story content there or in this repo’s docs—those belong on a personal profile or company marketing site, not in the OSS README or GitHub metadata.
+
 ### Repository name
 ```
 agent-forge

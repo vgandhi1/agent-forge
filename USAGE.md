@@ -90,6 +90,14 @@ cp .env.example .env
 
 Set variables the same way: **edit `.env`** (loaded by dotenv) and/or **export** in the shell before `python main.py`.
 
+### Ollama (local LLM)
+
+Set `AGENTFORGE_LLM_PROVIDER=ollama` and run [Ollama](https://ollama.com/) (`ollama serve`). Each role can use a different model via `AGENTFORGE_OLLAMA_MODEL_LEAD`, `AGENTFORGE_OLLAMA_MODEL_PM`, … (see `.env.example`). Defaults fall back to `AGENTFORGE_OLLAMA_MODEL` or `llama3.2`. Use models that support **tool calling** for best results.
+
+`AGENTFORGE_OLLAMA_HOST` must resolve to **loopback** by default (SSRF-safe). For Docker Compose on a private bridge, set `AGENTFORGE_OLLAMA_TRUST_LAN=1` and read the warning in `.env.example`.
+
+The **web UI** exposes provider choice, Ollama URL, **Refresh models**, and per-role model fields; those values are passed into the run as environment overrides.
+
 ---
 
 ## 2. Terminal (CLI)
@@ -132,7 +140,7 @@ uv run python main.py --preset test --goal "Increase coverage on finance routers
 uv run python main.py --preset full --goal-file ./sprint-goal.md
 ```
 
-If `ANTHROPIC_API_KEY` is missing, the CLI exits with an error (except `--dry-run` and `--list-artifacts`).
+If `ANTHROPIC_API_KEY` is missing, the CLI exits with an error unless you use **`AGENTFORGE_LLM_PROVIDER=ollama`** (then Ollama is used and the Anthropic key is not required). `--dry-run` and `--list-artifacts` never call either API.
 
 ---
 
@@ -172,6 +180,8 @@ uv run python main.py --web --web-port 9000
 
 Stop the server with **Ctrl+C** in the terminal.
 
+Use **LLM provider & per-role models** on the page to choose Anthropic vs Ollama, set `AGENTFORGE_OLLAMA_HOST`, refresh installed tags, and assign a model per role (optional; blanks use `.env` defaults).
+
 ---
 
 ## 5. With Claude Code
@@ -196,7 +206,8 @@ uv run python main.py --list-artifacts
 | Issue | What to try |
 |-------|-------------|
 | `ModuleNotFoundError` | Run `uv sync` or activate `.venv` and `pip install -r requirements.txt` |
-| `ANTHROPIC_API_KEY not set` | Add it to `.env`, or `export ANTHROPIC_API_KEY=…`, or `uv run --env-file .env …` |
+| `ANTHROPIC_API_KEY not set` | Add it to `.env`, or switch the web UI / env to **Ollama** (`AGENTFORGE_LLM_PROVIDER=ollama`) |
+| Ollama connection / tags | Ensure `ollama serve` is running; URL must be loopback unless `AGENTFORGE_OLLAMA_TRUST_LAN=1` |
 | Vars not visible to subprocess | Use `uv run --env-file .env` or `export UV_ENV_FILE=.env` |
 | `pytest` fails in **test** preset | Run `implement` or `full` first so `workspace/dailyease` exists; install that app’s `requirements.txt` into the venv if needed |
 | Web UI won’t connect | Open `127.0.0.1` and the port from `--web-port` |

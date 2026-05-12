@@ -10,7 +10,7 @@ Reviewed against the current codebase. Update this file as items ship.
 |------|--------|
 | `--goal-file` validation | `cli._load_goal_file` — exists, file, readable; exit code 2 with safe messaging. |
 | `--verbose` / `--log-file` | Root + `agentforge` loggers; stderr and optional file. |
-| Anthropic resilience | Retries with backoff in `BaseAgent._call_claude` (`RateLimitError`, `APIConnectionError`, `APITimeoutError`, 5xx `APIStatusError`); `AGENTFORGE_API_RETRIES`. |
+| Anthropic resilience | Retries with backoff in `BaseAgent._call_anthropic` (`RateLimitError`, `APIConnectionError`, `APITimeoutError`, 5xx `APIStatusError`); `AGENTFORGE_API_RETRIES`. |
 | Message `message_log` | `log_bus_message` in `core/memory.py`; called from `MessageBus.publish`. |
 | Structured / machine-readable events | Initial step: `logging` on bus (debug) and Lead (phase_start); JSON event stream still optional. |
 | Tests for AgentForge | `tests/test_cli_phases.py`, `test_artifact_store.py`, `test_message_bus.py` (pytest + pytest-asyncio). |

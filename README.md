@@ -20,7 +20,7 @@ Multi-agent pipeline (**Lead** orchestrator, PM, Architect, Backend, QA, DevOps)
    ```bash
    cp .env.example .env
    ```
-   Edit `.env` and set at least **`ANTHROPIC_API_KEY`**. Other keys are documented in `agents_plan.md` and `.env.example`.
+   Edit `.env` and set **`ANTHROPIC_API_KEY`** for Claude, or **`AGENTFORGE_LLM_PROVIDER=ollama`** for local models (see `agents_plan.md` and `.env.example`).
 
 **Ways those variables reach the process:**
 

@@ -14,10 +14,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 import uvicorn
 
+from core.ollama_url import validate_ollama_base_url
 from core.phases import PHASE_PRESETS
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -25,6 +27,38 @@ MAIN_PY = REPO_ROOT / "main.py"
 
 ALLOWED_PRESETS = frozenset(["full", *PHASE_PRESETS.keys()])
 MAX_GOAL_CHARS = 500_000
+
+AGENT_ROLES = ("lead", "pm", "architect", "backend", "qa", "devops")
+
+
+def _apply_llm_env(env: dict[str, str], llm: dict | None) -> str | None:
+    """Merge Web UI LLM selections into the subprocess environment. Returns an error message or None."""
+    if not llm:
+        return None
+    provider = str(llm.get("provider", "anthropic")).lower().strip()
+    if provider not in ("anthropic", "ollama"):
+        return "LLM provider must be anthropic or ollama."
+    env["AGENTFORGE_LLM_PROVIDER"] = provider
+    models = llm.get("models")
+    if not isinstance(models, dict):
+        models = {}
+    if provider == "ollama":
+        base = str(llm.get("ollama_base", "") or "http://127.0.0.1:11434").strip()
+        try:
+            safe = validate_ollama_base_url(base)
+        except ValueError as e:
+            return str(e)
+        env["AGENTFORGE_OLLAMA_HOST"] = safe
+        for role in AGENT_ROLES:
+            m = str(models.get(role, "") or "").strip()
+            if m:
+                env[f"AGENTFORGE_OLLAMA_MODEL_{role.upper()}"] = m
+    else:
+        for role in AGENT_ROLES:
+            m = str(models.get(role, "") or "").strip()
+            if m:
+                env[f"AGENTFORGE_MODEL_{role.upper()}"] = m
+    return None
 
 # Browsers request /favicon.ico by default; serve SVG at both paths (Content-Type: image/svg+xml).
 _FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
@@ -143,6 +177,74 @@ _INDEX_HTML = """<!DOCTYPE html>
     }
     .field { margin-bottom: 1.25rem; }
     .field:last-of-type { margin-bottom: 1rem; }
+    details.model-panel {
+      margin-bottom: 1.25rem;
+      border: 1px solid var(--stroke);
+      border-radius: var(--radius-sm);
+      background: rgba(6, 8, 10, 0.35);
+      padding: 0.5rem 1rem 1rem;
+    }
+    details.model-panel > summary {
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      padding: 0.35rem 0;
+    }
+    .model-panel-inner { padding-top: 0.25rem; }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      align-items: center;
+    }
+    .row input[type="text"] {
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+    input[type="text"].text-inp {
+      width: 100%;
+      font-family: inherit;
+      font-size: 0.95rem;
+      color: var(--text);
+      background: rgba(6, 8, 10, 0.65);
+      border: 1px solid var(--stroke);
+      border-radius: var(--radius-sm);
+      padding: 0.65rem 1rem;
+    }
+    input.text-inp:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .btn-secondary {
+      font-family: var(--sans);
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text);
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--stroke-strong);
+      border-radius: var(--radius-sm);
+      padding: 0.6rem 1rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+    .model-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .mg-row {
+      display: grid;
+      grid-template-columns: 100px 1fr;
+      gap: 0.65rem;
+      align-items: center;
+      font-size: 0.9rem;
+    }
+    .mg-row span { color: var(--muted); font-weight: 500; }
+    .ollama-only.hidden { display: none !important; }
     label {
       display: block;
       font-size: 0.8rem;
@@ -343,8 +445,41 @@ _INDEX_HTML = """<!DOCTYPE html>
       <div class="field">
         <label for="goal">Sprint goal / intake</label>
         <textarea id="goal" placeholder="Describe what to build, test, ship, or improve. Be specific — your Lead agent delegates from this."></textarea>
-        <p class="hint">Artifacts are written to <code>workspace/</code> in the project root. Ensure <code>ANTHROPIC_API_KEY</code> is set (e.g. in <code>.env</code>).</p>
+        <p class="hint">Artifacts are written to <code>workspace/</code> in the project root. Anthropic: set <code>ANTHROPIC_API_KEY</code> in the server environment. Ollama: run <code>ollama serve</code> and pick models per role below.</p>
       </div>
+      <details class="model-panel" open>
+        <summary>LLM provider & per-role models</summary>
+        <div class="model-panel-inner">
+          <div class="field">
+            <label for="llm_provider">Provider</label>
+            <select id="llm_provider" aria-label="LLM provider">
+              <option value="anthropic" selected>Anthropic API (CLAUDE)</option>
+              <option value="ollama">Ollama (local)</option>
+            </select>
+          </div>
+          <div class="field ollama-only" id="ollama_base_wrap">
+            <label for="ollama_base">Ollama URL</label>
+            <div class="row">
+              <input type="text" id="ollama_base" class="text-inp" value="http://127.0.0.1:11434" spellcheck="false" autocomplete="off" aria-label="Ollama base URL"/>
+              <button type="button" id="refresh_models" class="btn-secondary">Refresh models</button>
+            </div>
+            <p class="hint" id="ollama_models_hint">Loads model tags from your Ollama instance (URL validated server-side).</p>
+          </div>
+          <datalist id="model_tags"></datalist>
+          <div class="field">
+            <label>Model per role</label>
+            <div class="model-grid" role="group" aria-label="Per-role model names">
+              <div class="mg-row"><span>Lead</span><input class="text-inp role-model" data-role="lead" list="model_tags" id="model_lead" placeholder="e.g. llama3.2"/></div>
+              <div class="mg-row"><span>PM</span><input class="text-inp role-model" data-role="pm" list="model_tags" id="model_pm" placeholder="Default from .env"/></div>
+              <div class="mg-row"><span>Architect</span><input class="text-inp role-model" data-role="architect" list="model_tags" id="model_architect" placeholder="Default from .env"/></div>
+              <div class="mg-row"><span>Backend</span><input class="text-inp role-model" data-role="backend" list="model_tags" id="model_backend" placeholder="Default from .env"/></div>
+              <div class="mg-row"><span>QA</span><input class="text-inp role-model" data-role="qa" list="model_tags" id="model_qa" placeholder="Default from .env"/></div>
+              <div class="mg-row"><span>DevOps</span><input class="text-inp role-model" data-role="devops" list="model_tags" id="model_devops" placeholder="Default from .env"/></div>
+            </div>
+            <p class="hint">Leave blank to use server defaults (<code>AGENTFORGE_OLLAMA_MODEL_*</code> or <code>AGENTFORGE_MODEL_*</code>). Tool-capable models work best for Ollama.</p>
+          </div>
+        </div>
+      </details>
       <div class="actions">
         <button type="button" id="run">Run team</button>
         <p id="status" class="hint" aria-live="polite"></p>
@@ -370,6 +505,36 @@ _INDEX_HTML = """<!DOCTYPE html>
     const errEl = document.getElementById("error");
     const statusEl = document.getElementById("status");
     const runBtn = document.getElementById("run");
+    const provEl = document.getElementById("llm_provider");
+    const ollamaWrap = document.getElementById("ollama_base_wrap");
+
+    function syncProviderUi() {
+      const isOllama = provEl.value === "ollama";
+      ollamaWrap.classList.toggle("hidden", !isOllama);
+    }
+    provEl.addEventListener("change", syncProviderUi);
+    syncProviderUi();
+
+    document.getElementById("refresh_models").addEventListener("click", async () => {
+      const base = document.getElementById("ollama_base").value.trim();
+      const hint = document.getElementById("ollama_models_hint");
+      hint.textContent = "Loading…";
+      try {
+        const r = await fetch("/api/ollama/tags?base=" + encodeURIComponent(base));
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || r.statusText);
+        const dl = document.getElementById("model_tags");
+        dl.innerHTML = "";
+        for (const name of j.models || []) {
+          const opt = document.createElement("option");
+          opt.value = name;
+          dl.appendChild(opt);
+        }
+        hint.textContent = "Loaded " + (j.models || []).length + " model tag(s).";
+      } catch (e) {
+        hint.textContent = e.message || "Could not load tags.";
+      }
+    });
 
     function setStatus(text, state) {
       statusEl.textContent = text || "";
@@ -405,7 +570,19 @@ _INDEX_HTML = """<!DOCTYPE html>
 
       ws.onopen = () => {
         setStatus("Running pipeline…", "running");
-        ws.send(JSON.stringify({ preset, goal }));
+        const llmProvider = document.getElementById("llm_provider").value;
+        const models = {};
+        document.querySelectorAll(".role-model").forEach((el) => {
+          const role = el.getAttribute("data-role");
+          const v = el.value.trim();
+          if (v) models[role] = v;
+        });
+        const llm = {
+          provider: llmProvider,
+          ollama_base: document.getElementById("ollama_base").value.trim(),
+          models,
+        };
+        ws.send(JSON.stringify({ preset, goal, llm }));
       };
 
       ws.onmessage = (ev) => {
@@ -451,6 +628,36 @@ _INDEX_HTML = """<!DOCTYPE html>
 
 def create_app() -> FastAPI:
     app = FastAPI(title="AgentForge Web UI", docs_url=None, redoc_url=None)
+
+    @app.get("/api/ollama/tags")
+    async def ollama_tags(base: str = "http://127.0.0.1:11434") -> JSONResponse:
+        try:
+            safe = validate_ollama_base_url(base)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.get(f"{safe}/api/tags")
+                r.raise_for_status()
+                body = r.json()
+            raw_models = body.get("models") or []
+            names: list[str] = []
+            for m in raw_models:
+                if isinstance(m, dict):
+                    n = m.get("name")
+                    if isinstance(n, str) and n.strip():
+                        names.append(n.strip())
+            return JSONResponse({"models": sorted(set(names))})
+        except httpx.HTTPError:
+            return JSONResponse(
+                {"error": "Could not reach Ollama at that URL."},
+                status_code=502,
+            )
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"error": "Unexpected response from Ollama."},
+                status_code=502,
+            )
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
@@ -527,6 +734,23 @@ def create_app() -> FastAPI:
             goal_path = tmp.name
 
         env = os.environ.copy()
+        llm = data.get("llm")
+        if llm is not None and not isinstance(llm, dict):
+            await websocket.send_json({
+                "type": "error",
+                "code": "INVALID_LLM",
+                "message": 'Field "llm" must be an object when provided.',
+            })
+            return
+        llm_err = _apply_llm_env(env, llm)
+        if llm_err:
+            await websocket.send_json({
+                "type": "error",
+                "code": "INVALID_LLM",
+                "message": llm_err,
+            })
+            return
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable,

@@ -1,5 +1,6 @@
 # Mirrors pyproject.toml dependencies. Prefer: `uv sync` (uses uv.lock) for a reproducible env.
 anthropic>=0.40.0
+httpx>=0.27.0
 aiosqlite>=0.20.0
 pydantic>=2.0.0
 rich>=13.7.0

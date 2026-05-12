@@ -123,7 +123,7 @@ class LeadAgent(BaseAgent):
         context = await self._build_dynamic_context()
         context += f"\n\n## Sprint Goal\n{goal}"
 
-        response = await self._call_claude(
+        response = await self._call_llm(
             user_message=(
                 f"Formulate a specific, detailed task for the {agent_role} agent.\n\n"
                 f"Phase objective: {phase_description}\n\n"
@@ -233,7 +233,7 @@ class LeadAgent(BaseAgent):
             f"or reject_artifact with specific revision notes if it needs improvement."
         )
 
-        response = await self._call_claude(
+        response = await self._call_llm(
             user_message=review_prompt,
             dynamic_context=context,
             tools=_DELEGATION_TOOLS,

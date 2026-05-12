@@ -43,7 +43,7 @@ class ArchitectAgent(BaseAgent):
 
         sprint_goal = task.get("sprint_goal", "")
 
-        response = await self._call_claude(
+        response = await self._call_llm(
             user_message=(
                 f"Design the complete system architecture for DailyEase.\n\n"
                 f"Sprint goal (context): {sprint_goal}\n\n"
@@ -102,7 +102,7 @@ class ArchitectAgent(BaseAgent):
         original_content = await self.artifacts.read(original_path)
         context = await self._build_dynamic_context()
 
-        response = await self._call_claude(
+        response = await self._call_llm(
             user_message=(
                 f"Revise the architecture document:\n{notes}\n\n"
                 f"Original:\n```\n{original_content}\n```\n\nUse write_file."

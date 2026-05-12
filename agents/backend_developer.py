@@ -74,7 +74,7 @@ class BackendDeveloperAgent(BaseAgent):
 
         sprint_goal = task.get("sprint_goal", "")
 
-        response = await self._call_claude(
+        response = await self._call_llm(
             user_message=(
                 f"Implement the complete DailyEase FastAPI application.\n\n"
                 f"Sprint goal (context): {sprint_goal}\n\n"
@@ -127,7 +127,7 @@ class BackendDeveloperAgent(BaseAgent):
         context = await self._build_dynamic_context()
         files_summary = "\n".join(prior_files[:10])
 
-        response = await self._call_claude(
+        response = await self._call_llm(
             user_message=(
                 f"Revise the implementation based on this feedback:\n{notes}\n\n"
                 f"Files already written:\n{files_summary}\n\n"

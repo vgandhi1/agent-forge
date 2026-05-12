@@ -249,12 +249,16 @@ python main.py --dry-run
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | required* | Your Anthropic API key (*not needed for `--dry-run` / `--list-artifacts`) |
+| `ANTHROPIC_API_KEY` | required* | Anthropic API key (*omit when using Ollama provider; not needed for `--dry-run` / `--list-artifacts`) |
 | `AGENTFORGE_ROOT` | cwd | Project root (`agentforge.db`, path resolution) |
 | `AGENTFORGE_WORKSPACE` | `workspace` | Artifact directory under root |
 | `AGENTFORGE_DB` | `agentforge.db` | SQLite filename under root |
-| `AGENTFORGE_MODEL` | `claude-sonnet-4-6` | Model for all agents |
-| `AGENTFORGE_THINKING` | `false` | Enable extended thinking |
+| `AGENTFORGE_LLM_PROVIDER` | `anthropic` | `anthropic` or `ollama` |
+| `AGENTFORGE_MODEL` | `claude-sonnet-4-6` | Default Anthropic model; override per role with `AGENTFORGE_MODEL_LEAD`, `AGENTFORGE_MODEL_PM`, … |
+| `AGENTFORGE_OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama API origin (validated; loopback unless `AGENTFORGE_OLLAMA_TRUST_LAN=1`) |
+| `AGENTFORGE_OLLAMA_MODEL` | `llama3.2` | Default Ollama tag; per-role: `AGENTFORGE_OLLAMA_MODEL_LEAD`, `AGENTFORGE_OLLAMA_MODEL_PM`, … |
+| `AGENTFORGE_OLLAMA_TRUST_LAN` | unset | Set to `1` to allow private/LAN-resolved hosts for Ollama (dev/Docker only) |
+| `AGENTFORGE_THINKING` | `false` | Enable extended thinking (Anthropic only) |
 | `AGENTFORGE_THINKING_BUDGET` | `8000` | Token budget for thinking |
 | `AGENTFORGE_API_RETRIES` | `4` | Retries for rate limits, timeouts, connection errors, HTTP 5xx on Anthropic |
 | `UV_ENV_FILE` | (unset) | Optional: path passed to `uv run` so variables load from that file |

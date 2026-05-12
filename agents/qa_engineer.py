@@ -157,7 +157,7 @@ class QAEngineerAgent(BaseAgent):
             self.console.log("[yellow]QA[/yellow] test suite approved ✓")
 
     async def _generate_tests(self, user_message: str, context: str) -> list[str]:
-        response = await self._call_claude(
+        response = await self._call_llm(
             user_message=user_message,
             dynamic_context=context,
             tools=_TOOLS,

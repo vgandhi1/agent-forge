@@ -4,9 +4,11 @@ import logging
 import os
 import random
 from abc import ABC, abstractmethod
+from types import SimpleNamespace
 from typing import Any
 
 import anthropic
+import httpx
 from anthropic import APIConnectionError, APIStatusError, APITimeoutError, AsyncAnthropic, RateLimitError
 from rich.console import Console
 
@@ -14,13 +16,95 @@ from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.memory import AgentMemory
 from core.artifact_store import ArtifactStore
+from core.ollama_url import validate_ollama_base_url
 
-MODEL = os.getenv("AGENTFORGE_MODEL", "claude-sonnet-4-6")
 USE_THINKING = os.getenv("AGENTFORGE_THINKING", "false").lower() == "true"
 THINKING_BUDGET = int(os.getenv("AGENTFORGE_THINKING_BUDGET", "8000"))
 MAX_API_RETRIES = max(1, int(os.getenv("AGENTFORGE_API_RETRIES", "4")))
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
+DEFAULT_OLLAMA_MODEL = "llama3.2"
 
 _log = logging.getLogger("agentforge.agent")
+
+
+def llm_provider() -> str:
+    return os.getenv("AGENTFORGE_LLM_PROVIDER", "anthropic").strip().lower()
+
+
+def anthropic_model_for_role(role: str) -> str:
+    suffix = role.upper()
+    return (
+        os.getenv(f"AGENTFORGE_MODEL_{suffix}")
+        or os.getenv("AGENTFORGE_MODEL")
+        or DEFAULT_ANTHROPIC_MODEL
+    )
+
+
+def ollama_model_for_role(role: str) -> str:
+    suffix = role.upper()
+    return (
+        os.getenv(f"AGENTFORGE_OLLAMA_MODEL_{suffix}")
+        or os.getenv("AGENTFORGE_OLLAMA_MODEL")
+        or DEFAULT_OLLAMA_MODEL
+    )
+
+
+def ollama_chat_origin() -> str:
+    raw = os.getenv("AGENTFORGE_OLLAMA_HOST", "http://127.0.0.1:11434").strip()
+    return validate_ollama_base_url(raw)
+
+
+def anthropic_tools_to_ollama(tools: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for t in tools:
+        out.append({
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "parameters": t.get("input_schema") or {"type": "object", "properties": {}},
+            },
+        })
+    return out
+
+
+def _ollama_message_to_fake_anthropic_message(
+    data: dict,
+) -> SimpleNamespace:
+    """Build a minimal object compatible with _extract_tool_calls / _extract_text."""
+    msg = data.get("message") or {}
+    blocks: list[Any] = []
+    content = msg.get("content") or ""
+    if isinstance(content, str) and content.strip():
+        b = SimpleNamespace()
+        b.type = "text"
+        b.text = content
+        blocks.append(b)
+    for tc in msg.get("tool_calls") or []:
+        fn = tc.get("function") or {}
+        name = fn.get("name") or ""
+        raw_args = fn.get("arguments", "{}")
+        if isinstance(raw_args, str):
+            try:
+                parsed: dict[str, Any] = json.loads(raw_args) if raw_args.strip() else {}
+            except json.JSONDecodeError:
+                parsed = {}
+        elif isinstance(raw_args, dict):
+            parsed = raw_args
+        else:
+            parsed = {}
+        b = SimpleNamespace()
+        b.type = "tool_use"
+        b.name = name
+        b.input = parsed
+        blocks.append(b)
+    usage = SimpleNamespace(
+        input_tokens=int((data.get("prompt_eval_count") or 0)),
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
+    return SimpleNamespace(content=blocks, usage=usage)
+
 
 SYSTEM_PROMPTS: dict[str, str] = {
     "lead": """You are the Lead Orchestrator for AgentForge — the principal technical lead coordinating
@@ -194,23 +278,95 @@ class BaseAgent(ABC):
         self.bus = bus
         self.artifacts = artifact_store
         self.memory = AgentMemory(role)
-        self.client = AsyncAnthropic()
+        self._llm_provider = llm_provider()
+        self.client: AsyncAnthropic | None
+        if self._llm_provider == "ollama":
+            self.client = None
+        else:
+            self.client = AsyncAnthropic()
         self.console = console
         self._system_prompt = SYSTEM_PROMPTS[role]
         bus.register(role)
 
-    async def _call_claude(
+    async def _call_llm(
+        self,
+        user_message: str,
+        dynamic_context: str = "",
+        tools: list[dict] | None = None,
+    ) -> Any:
+        if self._llm_provider == "ollama":
+            return await self._call_ollama(user_message, dynamic_context, tools)
+        return await self._call_anthropic(user_message, dynamic_context, tools)
+
+    async def _call_ollama(
+        self,
+        user_message: str,
+        dynamic_context: str = "",
+        tools: list[dict] | None = None,
+    ) -> Any:
+        origin = ollama_chat_origin()
+        model = ollama_model_for_role(self.role)
+        ollama_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self._system_prompt},
+        ]
+        if dynamic_context.strip():
+            ollama_messages.append({
+                "role": "user",
+                "content": f"<sprint_context>\n{dynamic_context}\n</sprint_context>",
+            })
+            ollama_messages.append({
+                "role": "assistant",
+                "content": "Sprint context acknowledged. Ready for my task.",
+            })
+        ollama_messages.append({"role": "user", "content": user_message})
+
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": ollama_messages,
+            "stream": False,
+        }
+        if tools:
+            body["tools"] = anthropic_tools_to_ollama(tools)
+
+        url = f"{origin}/api/chat"
+        timeout = httpx.Timeout(600.0, connect=30.0)
+        last_err: BaseException | None = None
+        for attempt in range(MAX_API_RETRIES):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as http_client:
+                    r = await http_client.post(url, json=body)
+                    r.raise_for_status()
+                    data = r.json()
+                fake = _ollama_message_to_fake_anthropic_message(data)
+                if attempt > 0:
+                    _log.info("ollama call succeeded after retry role=%s attempt=%s", self.role, attempt)
+                self.console.log(f"[dim cyan]{self.role}[/dim cyan] ollama model={model!r} ok")
+                return fake
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as e:
+                last_err = e
+                _log.warning("ollama_network_error role=%s attempt=%s", self.role, attempt + 1)
+                await asyncio.sleep(min(30.0, (2**attempt) + random.uniform(0, 0.5)))
+            except httpx.HTTPStatusError as e:
+                last_err = e
+                code = e.response.status_code
+                if code >= 500:
+                    _log.warning("ollama_http_5xx status=%s role=%s attempt=%s", code, self.role, attempt + 1)
+                    await asyncio.sleep(min(30.0, (2**attempt) + random.uniform(0, 0.5)))
+                    continue
+                raise
+
+        assert last_err is not None
+        raise last_err
+
+    async def _call_anthropic(
         self,
         user_message: str,
         dynamic_context: str = "",
         tools: list[dict] | None = None,
     ) -> anthropic.types.Message:
-        """
-        Prompt caching strategy:
-        - tools (sorted) + system prompt → cache_control breakpoint
-        - dynamic context + user message → live (after breakpoint)
-        This means only the per-call tokens are charged at full rate.
-        """
+        if self.client is None:
+            raise RuntimeError("Anthropic client not initialized")
+        model = anthropic_model_for_role(self.role)
         system_blocks: list[dict] = [
             {
                 "type": "text",
@@ -233,16 +389,14 @@ class BaseAgent(ABC):
         messages.append({"role": "user", "content": user_message})
 
         kwargs: dict[str, Any] = {
-            "model": MODEL,
+            "model": model,
             "max_tokens": 16000,
             "system": system_blocks,
             "messages": messages,
         }
 
         if tools:
-            # Sort tools deterministically so tool order never invalidates the cache
             sorted_tools = sorted(tools, key=lambda t: t["name"])
-            # Place cache breakpoint on last tool so tools + system are all cached together
             sorted_tools[-1] = {
                 **sorted_tools[-1],
                 "cache_control": {"type": "ephemeral"},
@@ -308,18 +462,18 @@ class BaseAgent(ABC):
             )
         return "\n\n".join(parts)
 
-    def _extract_tool_calls(self, response: anthropic.types.Message) -> list[tuple[str, dict]]:
+    def _extract_tool_calls(self, response: Any) -> list[tuple[str, dict]]:
         """Return list of (tool_name, tool_input) pairs from response content."""
         calls = []
         for block in response.content:
-            if block.type == "tool_use":
+            if getattr(block, "type", None) == "tool_use":
                 calls.append((block.name, block.input))
         return calls
 
-    def _extract_text(self, response: anthropic.types.Message) -> str:
+    def _extract_text(self, response: Any) -> str:
         parts = []
         for block in response.content:
-            if hasattr(block, "text"):
+            if getattr(block, "type", None) == "text" and hasattr(block, "text"):
                 parts.append(block.text)
         return "\n".join(parts)
 

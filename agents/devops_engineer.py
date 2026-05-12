@@ -49,7 +49,7 @@ class DevOpsEngineerAgent(BaseAgent):
         context = await self._build_dynamic_context()
         sprint_goal = task.get("sprint_goal", "")
 
-        response = await self._call_claude(
+        response = await self._call_llm(
             user_message=(
                 f"Write production deployment configuration for DailyEase.\n\n"
                 f"Sprint goal (context): {sprint_goal}\n\n"
@@ -105,7 +105,7 @@ class DevOpsEngineerAgent(BaseAgent):
         arch_doc = await self.artifacts.read("docs/architecture.md")
         context = await self._build_dynamic_context()
 
-        response = await self._call_claude(
+        response = await self._call_llm(
             user_message=(
                 f"Revise deployment configs per feedback:\n{notes}\n\n"
                 f"Task: {task.get('task_description', '')}\n\n"

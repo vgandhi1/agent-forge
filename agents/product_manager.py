@@ -38,7 +38,7 @@ class ProductManagerAgent(BaseAgent):
         context = await self._build_dynamic_context()
         sprint_goal = task.get("sprint_goal") or (await self.memory.recall("sprint_goal") or "")
 
-        response = await self._call_claude(
+        response = await self._call_llm(
             user_message=(
                 f"Write the complete DailyEase requirements document.\n\n"
                 f"Sprint Goal: {sprint_goal}\n\n"
@@ -99,7 +99,7 @@ class ProductManagerAgent(BaseAgent):
         original_content = await self.artifacts.read(original_path)
         context = await self._build_dynamic_context()
 
-        response = await self._call_claude(
+        response = await self._call_llm(
             user_message=(
                 f"Revise the requirements document based on these notes:\n{revision_notes}\n\n"
                 f"Original content:\n```\n{original_content}\n```\n\n"

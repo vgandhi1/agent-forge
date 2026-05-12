@@ -17,7 +17,9 @@ from rich.table import Table
 from rich.text import Text
 
 from core.paths import ROOT, WORKSPACE
-from core.phases import DEFAULT_PHASES, PHASE_PRESETS, VALID_ROLES
+from core.phases import PHASE_PRESETS, VALID_ROLES
+from core.ollama_url import validate_ollama_base_url
+from agents.base_agent import anthropic_model_for_role, llm_provider, ollama_model_for_role
 
 load_dotenv()
 
@@ -67,7 +69,7 @@ Target: 100k+ concurrent users, sub-200ms API response time
 
 
 def _resolve_phases(preset: str | None, phases_csv: str | None) -> list[tuple[str, str]] | None:
-    """Return phase list for the Lead orchestrator, or None to use DEFAULT_PHASES."""
+    """Return phase list for the Lead orchestrator, or None to use the default full pipeline."""
     if phases_csv:
         roles = [p.strip() for p in phases_csv.split(",") if p.strip()]
         for r in roles:
@@ -294,11 +296,27 @@ def main() -> None:
     phases = _resolve_phases(args.preset, args.phases)
 
     if args.dry_run:
-        model = os.getenv("AGENTFORGE_MODEL", "claude-sonnet-4-6")
+        provider = llm_provider()
         thinking = os.getenv("AGENTFORGE_THINKING", "false")
         phase_desc = "default (full pipeline)" if phases is None else str([p[0] for p in phases])
+        roles = ("lead", "pm", "architect", "backend", "qa", "devops")
+        if provider == "ollama":
+            try:
+                ohost = validate_ollama_base_url(os.getenv("AGENTFORGE_OLLAMA_HOST", "http://127.0.0.1:11434"))
+            except ValueError as e:
+                ohost = f"(invalid AGENTFORGE_OLLAMA_HOST: {e})"
+            model_lines = "\n".join(
+                f"  {r}: {ollama_model_for_role(r)}" for r in roles
+            )
+            model_block = f"[bold]Ollama host:[/bold] {ohost}\n[bold]Per-role models:[/bold]\n{model_lines}"
+        else:
+            model_lines = "\n".join(
+                f"  {r}: {anthropic_model_for_role(r)}" for r in roles
+            )
+            model_block = f"[bold]Per-role Anthropic models:[/bold]\n{model_lines}"
         console.print(Panel(
-            f"[bold]Model:[/bold] {model}\n"
+            f"[bold]LLM provider:[/bold] {provider}\n"
+            f"{model_block}\n"
             f"[bold]Thinking:[/bold] {thinking}\n"
             f"[bold]ROOT:[/bold] {ROOT}\n"
             f"[bold]Workspace:[/bold] {WORKSPACE}\n"
@@ -309,9 +327,10 @@ def main() -> None:
         ))
         sys.exit(0)
 
-    if not os.getenv("ANTHROPIC_API_KEY"):
+    if llm_provider() != "ollama" and not os.getenv("ANTHROPIC_API_KEY"):
         console.print(
-            "[red]Error: ANTHROPIC_API_KEY not set. Copy .env.example to .env and add your key.[/red]"
+            "[red]Error: ANTHROPIC_API_KEY not set. Copy .env.example to .env and add your key, "
+            "or set AGENTFORGE_LLM_PROVIDER=ollama for local Ollama.[/red]"
         )
         sys.exit(1)
 
