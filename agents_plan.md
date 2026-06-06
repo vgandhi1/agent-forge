@@ -23,7 +23,8 @@ Four core modules:
 
 | Agent | Role | Artifacts Produced |
 |-------|------|--------------------|
-| **Lead** | Orchestrates all agents, reviews and approves artifacts, enforces phase gates | Sprint decisions, approval records |
+| **Lead** | Orchestrates all agents, enforces phase gates, consults the Reviewer at the approval gate | Sprint decisions, approval records |
+| **Reviewer** | Independent code review — reads the actual files and judges spec compliance, drift, security, logic, standards | Structured verdict (approve / reject / escalate) consumed by the Lead |
 | **Product Manager** | Writes requirements docs, user stories, API overviews | `workspace/docs/requirements.md` |
 | **Software Architect** | Designs system architecture, DB schema, API contracts | `workspace/docs/architecture.md` |
 | **Backend Developer** | Implements FastAPI app (models, schemas, routers, services) | `workspace/dailyease/` (20+ files) |
@@ -42,8 +43,14 @@ Lead (orchestrator)
 
 Approval loop (per agent):
   Lead sends TASK_ASSIGN ──► Agent produces artifact ──► TASK_COMPLETE
-  Lead reviews ──► ARTIFACT_APPROVED or ARTIFACT_REJECTED (with revision notes)
-  Up to 3 revision cycles before acceptance
+  Lead consults Reviewer (reads the real files) ──► verdict
+  Lead publishes ARTIFACT_APPROVED or ARTIFACT_REJECTED (with revision notes)
+  Up to 3 revision cycles; a missing verdict defaults to reject (silence ≠ approval).
+  Artifacts still failing after 3 cycles are accepted but flagged as unresolved review debt.
+
+Scope lock:
+  Agents defer out-of-scope work via a log_known_gap tool instead of expanding the task.
+  Reviewer drift + deferred items accumulate in reports/known_gaps.md, surfaced at the deploy gate.
 ```
 
 ### Message bus (implementation)
@@ -261,6 +268,8 @@ python main.py --dry-run
 | `AGENTFORGE_THINKING` | `false` | Enable extended thinking (Anthropic only) |
 | `AGENTFORGE_THINKING_BUDGET` | `8000` | Token budget for thinking |
 | `AGENTFORGE_API_RETRIES` | `4` | Retries for rate limits, timeouts, connection errors, HTTP 5xx on Anthropic |
+| `AGENTFORGE_DEPLOY_GATE` | unset | Set to `1` to require human sign-off before the deploy step (CLI: `--deploy-gate`; `--auto-approve` for unattended) |
+| `AGENTFORGE_DEPLOY_COMMIT` | unset | Set to `1` to commit the generated `workspace/dailyease` app to its own git repo on deploy (CLI: `--deploy-commit`) |
 | `UV_ENV_FILE` | (unset) | Optional: path passed to `uv run` so variables load from that file |
 
 ### Upgrade to Opus 4.7

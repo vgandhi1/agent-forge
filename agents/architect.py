@@ -43,7 +43,21 @@ class ArchitectAgent(BaseAgent):
 
         sprint_goal = task.get("sprint_goal", "")
 
-        response = await self._call_llm(
+        written_files: list[str] = []
+        primary_path = "docs/architecture.md"
+
+        async def write_file_handler(tool_input: dict) -> str:
+            nonlocal primary_path
+            path = tool_input["path"]
+            full_path = await self.artifacts.write(path, tool_input["content"])
+            written_files.append(str(full_path))
+            if "architecture" in path:
+                primary_path = path
+            await self.memory.remember(f"wrote_{path}", str(full_path), "artifact_ref")
+            self.console.log(f"[magenta]Architect[/magenta] wrote: {full_path}")
+            return f"Wrote {path} ({len(tool_input.get('content', ''))} bytes)."
+
+        result = await self.run_tool_loop(
             user_message=(
                 f"Design the complete system architecture for DailyEase.\n\n"
                 f"Sprint goal (context): {sprint_goal}\n\n"
@@ -53,24 +67,14 @@ class ArchitectAgent(BaseAgent):
                 f"system overview, tech stack, database schema, app structure, API design, "
                 f"data flow, security design, scalability considerations."
             ),
+            tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=_TOOLS,
+            max_steps=8,
         )
 
-        written_files: list[str] = []
-        primary_path = "docs/architecture.md"
-
-        for tool_name, tool_input in self._extract_tool_calls(response):
-            if tool_name == "write_file":
-                full_path = await self.artifacts.write(tool_input["path"], tool_input["content"])
-                written_files.append(str(full_path))
-                if "architecture" in tool_input["path"]:
-                    primary_path = tool_input["path"]
-                await self.memory.remember(f"wrote_{tool_input['path']}", str(full_path), "artifact_ref")
-                self.console.log(f"[magenta]Architect[/magenta] wrote: {full_path}")
-
         if not written_files:
-            fallback = self._extract_text(response)
+            fallback = result["final_text"]
             full_path = await self.artifacts.write(primary_path, fallback or "# Architecture\n\n[Generated]")
             written_files.append(str(full_path))
 
@@ -102,20 +106,23 @@ class ArchitectAgent(BaseAgent):
         original_content = await self.artifacts.read(original_path)
         context = await self._build_dynamic_context()
 
-        response = await self._call_llm(
+        written_files: list[str] = []
+
+        async def write_file_handler(tool_input: dict) -> str:
+            full_path = await self.artifacts.write(tool_input["path"], tool_input["content"])
+            written_files.append(str(full_path))
+            return f"Wrote {tool_input['path']} ({len(tool_input.get('content', ''))} bytes)."
+
+        await self.run_tool_loop(
             user_message=(
                 f"Revise the architecture document:\n{notes}\n\n"
                 f"Original:\n```\n{original_content}\n```\n\nUse write_file."
             ),
+            tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=_TOOLS,
+            max_steps=8,
         )
-
-        written_files = []
-        for tool_name, tool_input in self._extract_tool_calls(response):
-            if tool_name == "write_file":
-                full_path = await self.artifacts.write(tool_input["path"], tool_input["content"])
-                written_files.append(str(full_path))
 
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,

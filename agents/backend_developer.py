@@ -74,30 +74,44 @@ class BackendDeveloperAgent(BaseAgent):
 
         sprint_goal = task.get("sprint_goal", "")
 
-        response = await self._call_llm(
+        written_files: list[str] = []
+
+        async def write_file_handler(tool_input: dict) -> str:
+            path = tool_input["path"]
+            full_path = await self.artifacts.write(path, tool_input["content"])
+            written_files.append(str(full_path))
+            await self.memory.remember(f"wrote_{path}", str(full_path), "artifact_ref")
+            self.console.log(f"[green]Backend[/green] wrote: {full_path}")
+            size = len(tool_input.get("content", ""))
+            remaining = [f for f in _REQUIRED_FILES if not any(f in w for w in written_files)]
+            hint = (
+                f" {len(remaining)} required files still missing: {', '.join(remaining[:5])}"
+                + ("…" if len(remaining) > 5 else "")
+                if remaining
+                else " All required files written."
+            )
+            return f"Wrote {path} ({size} bytes).{hint}"
+
+        await self.run_tool_loop(
             user_message=(
                 f"Implement the complete DailyEase FastAPI application.\n\n"
                 f"Sprint goal (context): {sprint_goal}\n\n"
                 f"Architecture Document:\n```markdown\n{arch_content[:4000]}\n```\n\n"
                 f"Requirements Summary:\n```markdown\n{req_content[:2000]}\n```\n\n"
                 f"Task: {task['task_description']}\n\n"
-                f"Write ALL of these files using write_file (one call per file):\n"
+                f"Write ALL of these files using write_file — one call per file, "
+                f"continuing across turns until every file is written:\n"
                 + "\n".join(f"- {f}" for f in _REQUIRED_FILES)
                 + "\n\nEvery file must be complete and functional. "
                 f"Use SQLAlchemy 2.x async + aiosqlite + FastAPI + Pydantic v2. "
-                f"Include proper error handling in all routers."
+                f"Include proper error handling in all routers. "
+                f"Reply without a tool call only when all files are written."
             ),
+            tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=_TOOLS,
+            max_steps=40,
         )
-
-        written_files: list[str] = []
-        for tool_name, tool_input in self._extract_tool_calls(response):
-            if tool_name == "write_file":
-                full_path = await self.artifacts.write(tool_input["path"], tool_input["content"])
-                written_files.append(str(full_path))
-                await self.memory.remember(f"wrote_{tool_input['path']}", str(full_path), "artifact_ref")
-                self.console.log(f"[green]Backend[/green] wrote: {full_path}")
 
         primary_path = "dailyease/main.py"
 
@@ -127,21 +141,27 @@ class BackendDeveloperAgent(BaseAgent):
         context = await self._build_dynamic_context()
         files_summary = "\n".join(prior_files[:10])
 
-        response = await self._call_llm(
+        written_files: list[str] = []
+
+        async def write_file_handler(tool_input: dict) -> str:
+            path = tool_input["path"]
+            full_path = await self.artifacts.write(path, tool_input["content"])
+            written_files.append(str(full_path))
+            self.console.log(f"[green]Backend[/green] revised: {full_path}")
+            return f"Wrote {path} ({len(tool_input.get('content', ''))} bytes)."
+
+        await self.run_tool_loop(
             user_message=(
                 f"Revise the implementation based on this feedback:\n{notes}\n\n"
                 f"Files already written:\n{files_summary}\n\n"
-                f"Write corrected files using write_file."
+                f"Write corrected files using write_file (one call per file). "
+                f"Reply without a tool call only when all fixes are written."
             ),
+            tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=_TOOLS,
+            max_steps=40,
         )
-
-        written_files = []
-        for tool_name, tool_input in self._extract_tool_calls(response):
-            if tool_name == "write_file":
-                full_path = await self.artifacts.write(tool_input["path"], tool_input["content"])
-                written_files.append(str(full_path))
 
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,

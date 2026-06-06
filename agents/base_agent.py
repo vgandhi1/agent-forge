@@ -103,7 +103,9 @@ def _ollama_message_to_fake_anthropic_message(
         cache_read_input_tokens=0,
         cache_creation_input_tokens=0,
     )
-    return SimpleNamespace(content=blocks, usage=usage)
+    has_tool_use = any(getattr(b, "type", None) == "tool_use" for b in blocks)
+    stop_reason = "tool_use" if has_tool_use else "end_turn"
+    return SimpleNamespace(content=blocks, usage=usage, stop_reason=stop_reason)
 
 
 SYSTEM_PROMPTS: dict[str, str] = {
@@ -263,7 +265,64 @@ CI/CD requirements:
 - Push to ghcr.io on main branch merge
 
 Write production-grade configs. Security and reliability matter.""",
+
+    "reviewer": """You are the Code Reviewer at AgentForge — the last line of defense before an
+artifact is accepted into the DailyEase project. You have spent years cleaning up after corners
+that were cut, and you will not let it happen here. You are not here to be liked; you are here to
+make sure nothing is accepted that is broken, insecure, drifts from the brief, or that the team
+will have to apologize for later.
+
+You review the work of one teammate at a time (PM, Architect, Backend, QA, or DevOps). You read
+the ACTUAL files they produced — call read_file for the specific files you need to judge the work.
+Do not guess from the summary.
+
+Review against:
+1. Spec compliance — does it deliver exactly what the task brief asked? No missing pieces?
+2. Drift — did the agent add anything outside the brief? List it in the drift field even if it looks harmless.
+3. Security — untrusted input handling, authorization checks, no secrets in code.
+4. Logic correctness — edge cases, error paths, failure modes.
+5. Standards — does it follow the stack's idioms and the project's established patterns?
+
+Then call submit_review EXACTLY ONCE with your verdict:
+- decision "approve": it genuinely meets the brief with no blocking issues.
+- decision "reject": blocking issues exist. List specific Must Fix items: file, what is wrong, how to fix.
+- decision "escalate": the artifact needs a product or business decision you cannot make at the code level.
+
+Rules you never break:
+- Never approve work just to move it along. If it is not right, it is not right.
+- Silence is not approval. When in doubt, do not approve.
+- Describe what is wrong and how to fix it — do not rewrite the code yourself.
+- Keep Must Fix limited to blocking issues; non-blocking suggestions go in Should Fix.""",
 }
+
+
+_LOG_KNOWN_GAP_TOOL = {
+    "name": "log_known_gap",
+    "description": (
+        "Record an out-of-scope issue or deferred work you discovered, instead of fixing it now. "
+        "Use this to stay within the current task's scope (scope lock)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "description": "Kind of gap, e.g. bug, tech-debt, missing-feature, drift",
+            },
+            "description": {
+                "type": "string",
+                "description": "What is out of scope and why it was deferred",
+            },
+        },
+        "required": ["description"],
+    },
+}
+
+_SCOPE_LOCK_NOTE = (
+    "\n\nScope lock: do exactly this task — no more. If you find anything outside its scope "
+    "(other bugs, missing features, refactors), call log_known_gap to record it and move on. "
+    "Do not expand scope to fix it."
+)
 
 
 class BaseAgent(ABC):
@@ -298,14 +357,9 @@ class BaseAgent(ABC):
             return await self._call_ollama(user_message, dynamic_context, tools)
         return await self._call_anthropic(user_message, dynamic_context, tools)
 
-    async def _call_ollama(
-        self,
-        user_message: str,
-        dynamic_context: str = "",
-        tools: list[dict] | None = None,
-    ) -> Any:
-        origin = ollama_chat_origin()
-        model = ollama_model_for_role(self.role)
+    def _ollama_initial_messages(
+        self, user_message: str, dynamic_context: str = ""
+    ) -> list[dict[str, Any]]:
         ollama_messages: list[dict[str, Any]] = [
             {"role": "system", "content": self._system_prompt},
         ]
@@ -319,6 +373,24 @@ class BaseAgent(ABC):
                 "content": "Sprint context acknowledged. Ready for my task.",
             })
         ollama_messages.append({"role": "user", "content": user_message})
+        return ollama_messages
+
+    async def _call_ollama(
+        self,
+        user_message: str,
+        dynamic_context: str = "",
+        tools: list[dict] | None = None,
+    ) -> Any:
+        ollama_messages = self._ollama_initial_messages(user_message, dynamic_context)
+        return await self._ollama_create(ollama_messages, tools)
+
+    async def _ollama_create(
+        self,
+        ollama_messages: list[dict[str, Any]],
+        tools: list[dict] | None = None,
+    ) -> Any:
+        origin = ollama_chat_origin()
+        model = ollama_model_for_role(self.role)
 
         body: dict[str, Any] = {
             "model": model,
@@ -358,10 +430,34 @@ class BaseAgent(ABC):
         assert last_err is not None
         raise last_err
 
+    def _anthropic_initial_messages(
+        self, user_message: str, dynamic_context: str = ""
+    ) -> list[dict]:
+        messages: list[dict] = []
+        if dynamic_context.strip():
+            messages.append({
+                "role": "user",
+                "content": f"<sprint_context>\n{dynamic_context}\n</sprint_context>",
+            })
+            messages.append({
+                "role": "assistant",
+                "content": "Sprint context acknowledged. Ready for my task.",
+            })
+        messages.append({"role": "user", "content": user_message})
+        return messages
+
     async def _call_anthropic(
         self,
         user_message: str,
         dynamic_context: str = "",
+        tools: list[dict] | None = None,
+    ) -> anthropic.types.Message:
+        messages = self._anthropic_initial_messages(user_message, dynamic_context)
+        return await self._anthropic_create(messages, tools)
+
+    async def _anthropic_create(
+        self,
+        messages: list[dict],
         tools: list[dict] | None = None,
     ) -> anthropic.types.Message:
         if self.client is None:
@@ -374,19 +470,6 @@ class BaseAgent(ABC):
                 "cache_control": {"type": "ephemeral"},
             }
         ]
-
-        messages: list[dict] = []
-        if dynamic_context.strip():
-            messages.append({
-                "role": "user",
-                "content": f"<sprint_context>\n{dynamic_context}\n</sprint_context>",
-            })
-            messages.append({
-                "role": "assistant",
-                "content": "Sprint context acknowledged. Ready for my task.",
-            })
-
-        messages.append({"role": "user", "content": user_message})
 
         kwargs: dict[str, Any] = {
             "model": model,
@@ -476,6 +559,129 @@ class BaseAgent(ABC):
             if getattr(block, "type", None) == "text" and hasattr(block, "text"):
                 parts.append(block.text)
         return "\n".join(parts)
+
+    async def _log_known_gap_handler(self, tool_input: dict) -> str:
+        from core.known_gaps import log_gap
+
+        description = tool_input.get("description", "").strip()
+        if not description:
+            return "Ignored: log_known_gap needs a description."
+        category = tool_input.get("category", "general")
+        await log_gap(self.artifacts, self.role, category, description)
+        self.console.log(f"[dim]{self.role} logged known gap ({category}): {description[:60]}[/dim]")
+        return "Known gap recorded; stay in scope and continue the current task."
+
+    async def run_tool_loop(
+        self,
+        user_message: str,
+        tool_handlers: dict[str, Any],
+        dynamic_context: str = "",
+        tools: list[dict] | None = None,
+        max_steps: int = 16,
+        scope_lock: bool = True,
+    ) -> dict[str, Any]:
+        """Multi-turn agentic loop: call → execute tools → feed results back → repeat.
+
+        ``tool_handlers`` maps a tool name to an async callable ``(tool_input: dict) -> str``.
+        The returned string is sent back to the model as the ``tool_result`` so it can
+        continue (e.g. write the next file) until it stops requesting tools or ``max_steps``
+        is reached. Keeping the system prompt and tools block stable across iterations
+        preserves the prompt cache.
+
+        When ``scope_lock`` is true (default), a ``log_known_gap`` tool and a scope-lock
+        instruction are injected so the agent defers out-of-scope work instead of expanding
+        the task. Pass ``scope_lock=False`` for agents that should not defer (e.g. the Reviewer).
+
+        Returns ``{"final_text", "tool_calls", "results", "steps", "stop"}``.
+        """
+        effective_tools = list(tools or [])
+        handlers = dict(tool_handlers)
+        if scope_lock:
+            if not any(t.get("name") == "log_known_gap" for t in effective_tools):
+                effective_tools.append(_LOG_KNOWN_GAP_TOOL)
+            handlers.setdefault("log_known_gap", self._log_known_gap_handler)
+            user_message = user_message + _SCOPE_LOCK_NOTE
+        tools = effective_tools or None
+        tool_handlers = handlers
+
+        is_ollama = self._llm_provider == "ollama"
+        if is_ollama:
+            messages: list[Any] = self._ollama_initial_messages(user_message, dynamic_context)
+        else:
+            messages = self._anthropic_initial_messages(user_message, dynamic_context)
+
+        all_calls: list[tuple[str, dict]] = []
+        results: list[tuple[str, dict, str]] = []
+        text_parts: list[str] = []
+        stop = "max_steps"
+        step = 0
+
+        for step in range(max_steps):
+            if is_ollama:
+                response = await self._ollama_create(messages, tools)
+            else:
+                response = await self._anthropic_create(messages, tools)
+
+            step_text = self._extract_text(response)
+            if step_text:
+                text_parts.append(step_text)
+
+            tool_blocks = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
+
+            if not tool_blocks or getattr(response, "stop_reason", None) != "tool_use":
+                stop = "done"
+                break
+
+            tool_result_blocks: list[dict] = []
+            for block in tool_blocks:
+                name = block.name
+                tool_input = block.input
+                all_calls.append((name, tool_input))
+                handler = tool_handlers.get(name)
+                if handler is None:
+                    result_str = f"ERROR: no handler registered for tool {name!r}"
+                else:
+                    try:
+                        result_str = await handler(tool_input)
+                    except Exception as e:  # surface failure to the model, don't crash the loop
+                        result_str = f"ERROR: {type(e).__name__}: {e}"
+                        _log.warning("tool_handler_error role=%s tool=%s err=%s", self.role, name, e)
+                results.append((name, tool_input, result_str))
+                tool_result_blocks.append({
+                    "type": "tool_result",
+                    "tool_use_id": getattr(block, "id", name),
+                    "content": result_str,
+                })
+
+            if is_ollama:
+                # Ollama has no guaranteed tool_result role — feed results back as a user turn.
+                joined = "\n".join(f"- {n}: {r}" for n, _, r in results[-len(tool_blocks):])
+                messages.append({"role": "assistant", "content": step_text or " "})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Tool results:\n{joined}\n\n"
+                        "Continue with any remaining work — call the tool again for each "
+                        "remaining file. Reply without a tool call only when fully done."
+                    ),
+                })
+            else:
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user", "content": tool_result_blocks})
+        else:
+            _log.warning("tool_loop hit max_steps role=%s steps=%s", self.role, max_steps)
+
+        self.console.log(
+            f"[dim cyan]{self.role}[/dim cyan] tool loop: {len(all_calls)} calls, "
+            f"{step + 1} steps ({stop})"
+        )
+        return {
+            "final_text": "\n".join(text_parts),
+            "tool_calls": all_calls,
+            "results": results,
+            "steps": step + 1,
+            "stop": stop,
+        }
 
     @abstractmethod
     async def run(self) -> None:

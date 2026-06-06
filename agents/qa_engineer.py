@@ -157,18 +157,23 @@ class QAEngineerAgent(BaseAgent):
             self.console.log("[yellow]QA[/yellow] test suite approved ✓")
 
     async def _generate_tests(self, user_message: str, context: str) -> list[str]:
-        response = await self._call_llm(
+        written_files: list[str] = []
+
+        async def write_file_handler(tool_input: dict) -> str:
+            path = tool_input["path"]
+            full_path = await self.artifacts.write(path, tool_input["content"])
+            written_files.append(str(full_path))
+            await self.memory.remember(f"wrote_{path}", str(full_path), "artifact_ref")
+            self.console.log(f"[yellow]QA[/yellow] wrote: {full_path}")
+            return f"Wrote {path} ({len(tool_input.get('content', ''))} bytes)."
+
+        await self.run_tool_loop(
             user_message=user_message,
+            tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=_TOOLS,
+            max_steps=24,
         )
-        written_files: list[str] = []
-        for tool_name, tool_input in self._extract_tool_calls(response):
-            if tool_name == "write_file":
-                full_path = await self.artifacts.write(tool_input["path"], tool_input["content"])
-                written_files.append(str(full_path))
-                await self.memory.remember(f"wrote_{tool_input['path']}", str(full_path), "artifact_ref")
-                self.console.log(f"[yellow]QA[/yellow] wrote: {full_path}")
         return written_files
 
     async def _revise(self, notes: str, original_msg: Message, primary_path: str) -> None:

@@ -1,4 +1,8 @@
+import asyncio
 import logging
+import sys
+from datetime import UTC, datetime
+
 from rich.panel import Panel
 from rich.text import Text
 
@@ -6,7 +10,9 @@ from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
 from core.phases import DEFAULT_PHASES
+from core import deploy
 from .base_agent import BaseAgent
+from .reviewer import ReviewerAgent
 
 _DELEGATION_TOOLS = [
     {
@@ -89,6 +95,12 @@ class LeadAgent(BaseAgent):
     def __init__(self, role: str, bus: MessageBus, artifact_store: ArtifactStore, console) -> None:
         super().__init__(role, bus, artifact_store, console)
         self._approved_artifacts: dict[str, str] = {}
+        # Independent reviewer consulted at the approval gate (see _review_artifact).
+        self.reviewer = ReviewerAgent("reviewer", bus, artifact_store, console)
+        self._current_brief: str = ""
+        # Deploy gate hooks — overridable in tests. Defaults do real I/O.
+        self._approval_fn = self._default_approval
+        self._verify_fn = self._default_verify
 
     async def run(self) -> None:
         pass  # Lead is driven by run_development_cycle, not the message loop
@@ -97,6 +109,10 @@ class LeadAgent(BaseAgent):
         self,
         goal: str,
         phases: list[tuple[str, str]] | None = None,
+        *,
+        deploy_gate: bool = False,
+        auto_approve: bool = False,
+        deploy_commit: bool = False,
     ) -> None:
         phase_list = phases if phases is not None else DEFAULT_PHASES
         self.console.print(Panel(
@@ -115,6 +131,13 @@ class LeadAgent(BaseAgent):
             title="[bold green]Sprint Complete[/bold green]",
             border_style="green",
         ))
+
+        await self._finalize_sprint(
+            goal,
+            deploy_gate=deploy_gate,
+            auto_approve=auto_approve,
+            deploy_commit=deploy_commit,
+        )
 
     async def _run_phase(self, agent_role: str, phase_description: str, goal: str) -> None:
         self.console.rule(f"[bold yellow]Phase: {agent_role.upper()}[/bold yellow]")
@@ -152,6 +175,7 @@ class LeadAgent(BaseAgent):
 
         task_payload["approved_artifacts"] = dict(self._approved_artifacts)
         task_payload["sprint_goal"] = goal
+        self._current_brief = task_payload.get("task_description", phase_description)
 
         self.console.log(f"[cyan]Lead → {agent_role}:[/cyan] {task_payload.get('deliverable', '')}")
 
@@ -194,6 +218,14 @@ class LeadAgent(BaseAgent):
                 artifact_path = artifact.get("primary_path", artifact.get("path", ""))
                 self._approved_artifacts[f"{agent_role}_artifact"] = artifact_path
                 await self.memory.remember(f"{agent_role}_artifact", artifact_path, "artifact_ref")
+                # Flagged escalation, not a silent pass: accept to avoid deadlock, but record
+                # that review findings are unresolved so the debt is visible downstream.
+                debt_note = (
+                    f"{agent_role} artifact accepted after {max_revisions} revision cycles with "
+                    f"UNRESOLVED review findings — flagged for follow-up."
+                )
+                await self.memory.remember(f"quality_debt_{agent_role}", debt_note, "decision")
+                _lead_log.warning("quality_debt role=%s path=%s", agent_role, artifact_path)
                 await self.bus.publish(Message(
                     type=MessageType.ARTIFACT_APPROVED,
                     sender="lead",
@@ -201,85 +233,222 @@ class LeadAgent(BaseAgent):
                     payload={
                         "agent": agent_role,
                         "artifact_name": artifact_path,
-                        "approval_notes": "Accepted after maximum revision cycles",
+                        "approval_notes": (
+                            "ACCEPTED WITH UNRESOLVED REVIEW FINDINGS after max revision cycles "
+                            "(flagged for follow-up)"
+                        ),
                     },
                     priority=1,
                 ))
-                self.console.log(f"[yellow]Accepted {agent_role} artifact after max revisions[/yellow]")
+                self.console.log(
+                    f"[bold red][FLAGGED][/bold red] accepted {agent_role} artifact after max "
+                    f"revisions with unresolved review findings"
+                )
                 break
 
             self.console.log(f"[yellow]Revision {revision} requested for {agent_role}[/yellow]")
 
     async def _review_artifact(self, agent_role: str, artifact: dict, attempt: int) -> bool:
+        """Consult the independent Reviewer and act on its verdict.
+
+        The Reviewer reads the actual files (not a truncated preview) and returns a
+        structured decision. A missing verdict defaults to reject — silence is not approval.
+        """
         artifact_path = artifact.get("primary_path", artifact.get("path", ""))
-        files_written = artifact.get("files", [])
+        files_written = artifact.get("files", []) or ([artifact_path] if artifact_path else [])
         summary = artifact.get("summary", "")
 
-        self.console.log(f"[cyan]Lead reviewing {agent_role} artifact: {summary}[/cyan]")
-
-        content_preview = ""
-        if artifact_path:
-            content_preview = await self.artifacts.read(artifact_path)
-            content_preview = content_preview[:3000]
+        self.console.log(
+            f"[cyan]Reviewer auditing {agent_role} artifact (attempt {attempt + 1}): {summary}[/cyan]"
+        )
 
         context = await self._build_dynamic_context()
 
-        review_prompt = (
-            f"Review the {agent_role}'s submitted artifact (attempt {attempt + 1}).\n\n"
-            f"Summary: {summary}\n"
-            f"Files written: {files_written}\n\n"
-            f"Artifact content preview:\n```\n{content_preview}\n```\n\n"
-            f"Use approve_artifact if it meets the acceptance criteria, "
-            f"or reject_artifact with specific revision notes if it needs improvement."
-        )
-
-        response = await self._call_llm(
-            user_message=review_prompt,
+        verdict = await self.reviewer.review(
+            phase_role=agent_role,
+            summary=summary,
+            files=files_written,
+            brief=self._current_brief,
             dynamic_context=context,
-            tools=_DELEGATION_TOOLS,
         )
 
-        approved = False
-        tool_used = False
-        calls = self._extract_tool_calls(response)
-        reject_calls = [inp for name, inp in calls if name == "reject_artifact"]
-        approve_calls = [inp for name, inp in calls if name == "approve_artifact"]
+        decision = verdict.get("decision", "reject")
+        must_fix = verdict.get("must_fix") or []
+        should_fix = verdict.get("should_fix") or []
+        review_summary = verdict.get("summary", "")
 
-        for tool_name, tool_input in calls:
-            if tool_name == "record_decision":
-                await self.memory.remember(
-                    tool_input["decision_key"], tool_input["decision_value"], "decision"
-                )
+        if decision == "approve":
+            await self.bus.publish(Message(
+                type=MessageType.ARTIFACT_APPROVED,
+                sender="lead",
+                recipient=agent_role,
+                payload={
+                    "agent": agent_role,
+                    "artifact_name": artifact_path,
+                    "approval_notes": review_summary or "Reviewer approved.",
+                },
+                priority=1,
+            ))
+            self.console.log(f"[green]Reviewer approved {agent_role} artifact[/green]")
+            return True
 
-        if reject_calls:
-            approved = False
-            tool_used = True
+        if decision == "escalate":
+            question = verdict.get("escalation_question") or review_summary
+            await self.memory.remember(f"escalation_{agent_role}", question, "decision")
+            _lead_log.warning("review_escalation role=%s q=%s", agent_role, question)
+            notes = f"ESCALATION (needs a product/business decision): {question}"
+            if should_fix:
+                notes += "\n\nShould fix:\n" + "\n".join(f"- {s}" for s in should_fix)
             await self.bus.publish(Message(
                 type=MessageType.ARTIFACT_REJECTED,
                 sender="lead",
                 recipient=agent_role,
-                payload=reject_calls[-1],
+                payload={"agent": agent_role, "artifact_name": artifact_path, "revision_notes": notes},
                 priority=1,
             ))
-        elif approve_calls:
-            approved = True
-            tool_used = True
-            await self.bus.publish(Message(
-                type=MessageType.ARTIFACT_APPROVED,
-                sender="lead",
-                recipient=agent_role,
-                payload=approve_calls[-1],
-                priority=1,
-            ))
+            self.console.log(f"[magenta]Reviewer escalated {agent_role} artifact[/magenta]")
+            return False
 
-        if not tool_used:
-            approved = True
-            await self.bus.publish(Message(
-                type=MessageType.ARTIFACT_APPROVED,
-                sender="lead",
-                recipient=agent_role,
-                payload={"agent": agent_role, "artifact_name": artifact_path, "approval_notes": "Accepted"},
-                priority=1,
-            ))
+        # decision == "reject" (or anything unrecognized → treat as reject)
+        notes_parts: list[str] = []
+        if must_fix:
+            notes_parts.append("Must fix:\n" + "\n".join(f"- {m}" for m in must_fix))
+        if should_fix:
+            notes_parts.append("Should fix:\n" + "\n".join(f"- {s}" for s in should_fix))
+        revision_notes = "\n\n".join(notes_parts) or review_summary or "Revisions required."
+        await self.bus.publish(Message(
+            type=MessageType.ARTIFACT_REJECTED,
+            sender="lead",
+            recipient=agent_role,
+            payload={"agent": agent_role, "artifact_name": artifact_path, "revision_notes": revision_notes},
+            priority=1,
+        ))
+        self.console.log(f"[yellow]Reviewer rejected {agent_role} artifact ({len(must_fix)} must-fix)[/yellow]")
+        return False
 
-        return approved
+    # ------------------------------------------------------------------ deploy gate
+
+    async def _default_verify(self) -> tuple[str, str]:
+        return await deploy.run_pytest_smoke(self.artifacts.dailyease_root())
+
+    async def _default_approval(self, summary: str) -> bool:
+        """Interactive go/no-go. Without a TTY, do not approve (fail safe)."""
+        if not sys.stdin.isatty():
+            self.console.log(
+                "[yellow]Deploy gate enabled but no interactive terminal — not approving "
+                "(use --auto-approve for unattended deploys).[/yellow]"
+            )
+            return False
+        self.console.print(summary)
+        loop = asyncio.get_event_loop()
+        answer = await loop.run_in_executor(
+            None, lambda: input("Approve deploy? [y/N] ").strip().lower()
+        )
+        return answer in ("y", "yes")
+
+    async def _build_deploy_summary(self, goal: str) -> str:
+        decisions = await self.memory.recall_all("decision")
+        debts = {k: v for k, v in decisions.items() if k.startswith("quality_debt_")}
+        escalations = {k: v for k, v in decisions.items() if k.startswith("escalation_")}
+
+        lines = ["## Deploy summary", f"Sprint goal: {goal.strip().splitlines()[0] if goal.strip() else '(none)'}", ""]
+        if self._approved_artifacts:
+            lines.append("Accepted artifacts:")
+            lines += [f"- {k}: {v}" for k, v in self._approved_artifacts.items()]
+        else:
+            lines.append("No artifacts were accepted.")
+        if debts:
+            lines += ["", "⚠ Unresolved review findings (quality debt):"]
+            lines += [f"- {v}" for v in debts.values()]
+        if escalations:
+            lines += ["", "⚠ Open escalations:"]
+            lines += [f"- {v}" for v in escalations.values()]
+
+        from core.known_gaps import GAPS_PATH
+
+        gaps = await self.artifacts.read(GAPS_PATH)
+        if gaps.strip() and not gaps.lstrip().startswith("["):
+            gap_entries = [ln for ln in gaps.splitlines() if ln.startswith("- [")]
+            if gap_entries:
+                lines += ["", f"⚠ Known gaps deferred ({len(gap_entries)}) — see {GAPS_PATH}:"]
+                lines += gap_entries[:10]
+                if len(gap_entries) > 10:
+                    lines.append(f"- … and {len(gap_entries) - 10} more")
+        return "\n".join(lines)
+
+    async def _finalize_sprint(
+        self,
+        goal: str,
+        *,
+        deploy_gate: bool,
+        auto_approve: bool,
+        deploy_commit: bool,
+    ) -> None:
+        self.console.rule("[bold blue]Deploy gate[/bold blue]")
+
+        summary = await self._build_deploy_summary(goal)
+        verify_status, verify_detail = await self._verify_fn()
+        self.console.log(f"[blue]Verify (pytest smoke): {verify_status}[/blue]")
+        _lead_log.info("deploy_verify status=%s", verify_status)
+        summary += f"\n\nVerification (pytest smoke): {verify_status}"
+
+        if not deploy_gate:
+            self.console.log(
+                "[dim]Deploy gate disabled — autonomous run, no human sign-off requested. "
+                "Set --deploy-gate to require approval.[/dim]"
+            )
+            decision = "autonomous"
+        else:
+            if verify_status == "fail":
+                self.console.log("[red]Verification failed — review the smoke test before approving.[/red]")
+            approved = True if auto_approve else await self._approval_fn(summary)
+            if not approved:
+                self.console.print(Panel(
+                    Text("Deploy declined. Nothing was shipped.", style="bold red"),
+                    title="[bold red]Deploy Aborted[/bold red]",
+                    border_style="red",
+                ))
+                await self._write_deploy_record(goal, "aborted", verify_status, verify_detail, commit_info=None)
+                return
+            decision = "approved (auto)" if auto_approve else "approved"
+
+        commit_info: str | None = None
+        if deploy_commit:
+            ok, info = await deploy.git_commit_dir(
+                self.artifacts.dailyease_root(),
+                f"Deploy DailyEase — {goal.strip().splitlines()[0] if goal.strip() else 'sprint'}",
+            )
+            commit_info = f"{'committed ' + info if ok else 'commit skipped: ' + info}"
+            level = "green" if ok else "yellow"
+            self.console.log(f"[{level}]Deploy commit: {commit_info}[/{level}]")
+
+        record_path = await self._write_deploy_record(goal, decision, verify_status, verify_detail, commit_info)
+        self.console.print(Panel(
+            Text(f"Deploy recorded ({decision}). See {record_path}", style="bold green"),
+            title="[bold green]Deploy Gate Complete[/bold green]",
+            border_style="green",
+        ))
+
+    async def _write_deploy_record(
+        self,
+        goal: str,
+        decision: str,
+        verify_status: str,
+        verify_detail: str,
+        commit_info: str | None,
+    ) -> str:
+        ts = datetime.now(UTC).isoformat()
+        summary = await self._build_deploy_summary(goal)
+        body = [
+            "# Deploy Record",
+            f"Timestamp: {ts}",
+            f"Decision: {decision}",
+            f"Verification: {verify_status}",
+        ]
+        if commit_info is not None:
+            body.append(f"Commit: {commit_info}")
+        body += ["", summary, "", "## Verification detail", "```", verify_detail.strip() or "(none)", "```", ""]
+        path = "reports/deploy_record.md"
+        await self.artifacts.write(path, "\n".join(body))
+        await self.memory.remember("deploy_decision", decision, "decision")
+        return path

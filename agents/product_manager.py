@@ -38,7 +38,21 @@ class ProductManagerAgent(BaseAgent):
         context = await self._build_dynamic_context()
         sprint_goal = task.get("sprint_goal") or (await self.memory.recall("sprint_goal") or "")
 
-        response = await self._call_llm(
+        written_files: list[str] = []
+        primary_path = "docs/requirements.md"
+
+        async def write_file_handler(tool_input: dict) -> str:
+            nonlocal primary_path
+            path = tool_input["path"]
+            full_path = await self.artifacts.write(path, tool_input["content"])
+            written_files.append(str(full_path))
+            if "requirements" in path:
+                primary_path = path
+            await self.memory.remember(f"wrote_{path}", str(full_path), "artifact_ref")
+            self.console.log(f"[blue]PM[/blue] wrote: {full_path}")
+            return f"Wrote {path} ({len(tool_input.get('content', ''))} bytes)."
+
+        result = await self.run_tool_loop(
             user_message=(
                 f"Write the complete DailyEase requirements document.\n\n"
                 f"Sprint Goal: {sprint_goal}\n\n"
@@ -47,26 +61,15 @@ class ProductManagerAgent(BaseAgent):
                 f"Include all required sections: executive summary, personas, problem statement, "
                 f"feature specs for all 4 modules, user stories, API overview, NFRs, out of scope."
             ),
+            tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=[_WRITE_FILE_TOOL],
+            max_steps=8,
         )
 
-        written_files: list[str] = []
-        primary_path = "docs/requirements.md"
-
-        for tool_name, tool_input in self._extract_tool_calls(response):
-            if tool_name == "write_file":
-                path = tool_input["path"]
-                full_path = await self.artifacts.write(path, tool_input["content"])
-                written_files.append(str(full_path))
-                if "requirements" in path:
-                    primary_path = path
-                await self.memory.remember(f"wrote_{path}", str(full_path), "artifact_ref")
-                self.console.log(f"[blue]PM[/blue] wrote: {full_path}")
-
-        # Ensure file exists even if Claude didn't use the tool
+        # Ensure file exists even if the model didn't use the tool
         if not written_files:
-            fallback = self._extract_text(response)
+            fallback = result["final_text"]
             full_path = await self.artifacts.write(primary_path, fallback or "# Requirements\n\n[Generated]")
             written_files.append(str(full_path))
 
@@ -99,21 +102,24 @@ class ProductManagerAgent(BaseAgent):
         original_content = await self.artifacts.read(original_path)
         context = await self._build_dynamic_context()
 
-        response = await self._call_llm(
+        written_files: list[str] = []
+
+        async def write_file_handler(tool_input: dict) -> str:
+            full_path = await self.artifacts.write(tool_input["path"], tool_input["content"])
+            written_files.append(str(full_path))
+            return f"Wrote {tool_input['path']} ({len(tool_input.get('content', ''))} bytes)."
+
+        await self.run_tool_loop(
             user_message=(
                 f"Revise the requirements document based on these notes:\n{revision_notes}\n\n"
                 f"Original content:\n```\n{original_content}\n```\n\n"
                 f"Write the revised document using write_file."
             ),
+            tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=[_WRITE_FILE_TOOL],
+            max_steps=8,
         )
-
-        written_files: list[str] = []
-        for tool_name, tool_input in self._extract_tool_calls(response):
-            if tool_name == "write_file":
-                full_path = await self.artifacts.write(tool_input["path"], tool_input["content"])
-                written_files.append(str(full_path))
 
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,
