@@ -54,6 +54,11 @@ _REVIEWER_TOOLS = [
                     "items": {"type": "string"},
                     "description": "Non-blocking recommendations. May be empty.",
                 },
+                "drift": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Things the agent added beyond the brief (scope drift). Flag even if harmless; these are logged as known gaps, not necessarily blocking.",
+                },
                 "escalation_question": {
                     "type": "string",
                     "description": "If decision is escalate: the product/business question that must be resolved.",
@@ -124,6 +129,7 @@ class ReviewerAgent(BaseAgent):
             dynamic_context=dynamic_context,
             tools=_REVIEWER_TOOLS,
             max_steps=24,
+            scope_lock=False,  # reviewer reports drift via its verdict, doesn't defer work
         )
 
         if not verdict:
@@ -132,12 +138,22 @@ class ReviewerAgent(BaseAgent):
                 "summary": "Reviewer returned no verdict; rejecting by default (silence is not approval).",
                 "must_fix": ["Reviewer did not submit a verdict — resubmit the artifact for review."],
                 "should_fix": [],
+                "drift": [],
                 "escalation_question": "",
             }
 
         verdict.setdefault("must_fix", [])
         verdict.setdefault("should_fix", [])
+        verdict.setdefault("drift", [])
         verdict.setdefault("summary", "")
         verdict.setdefault("escalation_question", "")
         verdict["decision"] = str(verdict.get("decision", "reject")).lower()
+
+        # Route any flagged drift to the persisted Known-Gaps log.
+        if verdict["drift"]:
+            from core.known_gaps import log_gap
+
+            for item in verdict["drift"]:
+                await log_gap(self.artifacts, f"reviewer:{phase_role}", "drift", str(item))
+
         return verdict

@@ -47,6 +47,10 @@ Approval loop (per agent):
   Lead publishes ARTIFACT_APPROVED or ARTIFACT_REJECTED (with revision notes)
   Up to 3 revision cycles; a missing verdict defaults to reject (silence ≠ approval).
   Artifacts still failing after 3 cycles are accepted but flagged as unresolved review debt.
+
+Scope lock:
+  Agents defer out-of-scope work via a log_known_gap tool instead of expanding the task.
+  Reviewer drift + deferred items accumulate in reports/known_gaps.md, surfaced at the deploy gate.
 ```
 
 ### Message bus (implementation)

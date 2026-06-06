@@ -278,7 +278,7 @@ Do not guess from the summary.
 
 Review against:
 1. Spec compliance — does it deliver exactly what the task brief asked? No missing pieces?
-2. Drift — did the agent add anything outside the brief? Flag it even if it looks harmless.
+2. Drift — did the agent add anything outside the brief? List it in the drift field even if it looks harmless.
 3. Security — untrusted input handling, authorization checks, no secrets in code.
 4. Logic correctness — edge cases, error paths, failure modes.
 5. Standards — does it follow the stack's idioms and the project's established patterns?
@@ -294,6 +294,35 @@ Rules you never break:
 - Describe what is wrong and how to fix it — do not rewrite the code yourself.
 - Keep Must Fix limited to blocking issues; non-blocking suggestions go in Should Fix.""",
 }
+
+
+_LOG_KNOWN_GAP_TOOL = {
+    "name": "log_known_gap",
+    "description": (
+        "Record an out-of-scope issue or deferred work you discovered, instead of fixing it now. "
+        "Use this to stay within the current task's scope (scope lock)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "description": "Kind of gap, e.g. bug, tech-debt, missing-feature, drift",
+            },
+            "description": {
+                "type": "string",
+                "description": "What is out of scope and why it was deferred",
+            },
+        },
+        "required": ["description"],
+    },
+}
+
+_SCOPE_LOCK_NOTE = (
+    "\n\nScope lock: do exactly this task — no more. If you find anything outside its scope "
+    "(other bugs, missing features, refactors), call log_known_gap to record it and move on. "
+    "Do not expand scope to fix it."
+)
 
 
 class BaseAgent(ABC):
@@ -531,6 +560,17 @@ class BaseAgent(ABC):
                 parts.append(block.text)
         return "\n".join(parts)
 
+    async def _log_known_gap_handler(self, tool_input: dict) -> str:
+        from core.known_gaps import log_gap
+
+        description = tool_input.get("description", "").strip()
+        if not description:
+            return "Ignored: log_known_gap needs a description."
+        category = tool_input.get("category", "general")
+        await log_gap(self.artifacts, self.role, category, description)
+        self.console.log(f"[dim]{self.role} logged known gap ({category}): {description[:60]}[/dim]")
+        return "Known gap recorded; stay in scope and continue the current task."
+
     async def run_tool_loop(
         self,
         user_message: str,
@@ -538,6 +578,7 @@ class BaseAgent(ABC):
         dynamic_context: str = "",
         tools: list[dict] | None = None,
         max_steps: int = 16,
+        scope_lock: bool = True,
     ) -> dict[str, Any]:
         """Multi-turn agentic loop: call → execute tools → feed results back → repeat.
 
@@ -547,8 +588,22 @@ class BaseAgent(ABC):
         is reached. Keeping the system prompt and tools block stable across iterations
         preserves the prompt cache.
 
+        When ``scope_lock`` is true (default), a ``log_known_gap`` tool and a scope-lock
+        instruction are injected so the agent defers out-of-scope work instead of expanding
+        the task. Pass ``scope_lock=False`` for agents that should not defer (e.g. the Reviewer).
+
         Returns ``{"final_text", "tool_calls", "results", "steps", "stop"}``.
         """
+        effective_tools = list(tools or [])
+        handlers = dict(tool_handlers)
+        if scope_lock:
+            if not any(t.get("name") == "log_known_gap" for t in effective_tools):
+                effective_tools.append(_LOG_KNOWN_GAP_TOOL)
+            handlers.setdefault("log_known_gap", self._log_known_gap_handler)
+            user_message = user_message + _SCOPE_LOCK_NOTE
+        tools = effective_tools or None
+        tool_handlers = handlers
+
         is_ollama = self._llm_provider == "ollama"
         if is_ollama:
             messages: list[Any] = self._ollama_initial_messages(user_message, dynamic_context)

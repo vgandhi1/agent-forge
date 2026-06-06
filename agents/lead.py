@@ -363,6 +363,17 @@ class LeadAgent(BaseAgent):
         if escalations:
             lines += ["", "⚠ Open escalations:"]
             lines += [f"- {v}" for v in escalations.values()]
+
+        from core.known_gaps import GAPS_PATH
+
+        gaps = await self.artifacts.read(GAPS_PATH)
+        if gaps.strip() and not gaps.lstrip().startswith("["):
+            gap_entries = [ln for ln in gaps.splitlines() if ln.startswith("- [")]
+            if gap_entries:
+                lines += ["", f"⚠ Known gaps deferred ({len(gap_entries)}) — see {GAPS_PATH}:"]
+                lines += gap_entries[:10]
+                if len(gap_entries) > 10:
+                    lines.append(f"- … and {len(gap_entries) - 10} more")
         return "\n".join(lines)
 
     async def _finalize_sprint(

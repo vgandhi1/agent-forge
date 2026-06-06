@@ -102,10 +102,14 @@ only the files it needs, then `submit_review` with a structured verdict (approve
 + must_fix / should_fix). Distinct from QA's test execution. The Lead instantiates it and consults it
 at the approval gate. Tests in `tests/test_reviewer.py`.
 
-### 5. No scope-lock / drift detection / Known-Gaps log
-**Where:** All worker agents; review path in `lead.py`.
+### 5. No scope-lock / drift detection / Known-Gaps log **[done]**
+**Where:** `core/known_gaps.py` (new), `agents/base_agent.py` (`run_tool_loop`), `agents/reviewer.py`, `agents/lead.py`.
 **Problem:** No drift check in review, nowhere to defer out-of-scope discoveries.
-**Fix:** Persisted "known gaps" list; reviewer flags additions not in the task brief.
+**Shipped:** Persisted Known-Gaps log at `reports/known_gaps.md` (`core.known_gaps.log_gap`).
+`run_tool_loop` now auto-injects a `log_known_gap` tool and a scope-lock instruction (default on;
+`scope_lock=False` opts out) so any agent defers out-of-scope work instead of expanding the task.
+The Reviewer's verdict gained a `drift` field — anything added beyond the brief is routed to the
+Known-Gaps log. The Lead's deploy summary lists the deferred gaps. Tests in `tests/test_scope_lock.py`.
 
 ### 6. Crude context truncation vs. selective read
 **Where:** `backend_developer.py` (`arch_content[:4000]`, `req_content[:2000]`), `lead.py` (`content_preview[:3000]`).
@@ -135,8 +139,8 @@ at the approval gate. Tests in `tests/test_reviewer.py`.
 1. ~~**#1 multi-turn tool loop** — foundational; complete artifacts.~~ **[done]**
 2. ~~**#3 + #4 real review** — meaningful only after #1.~~ **[done]**
 3. ~~**#2 deploy / human gate** — accountability before shipping.~~ **[done]**
-4. **#5 scope lock** — drift control. ← next
-5. **#6–#10** — polish and resilience.
+4. ~~**#5 scope lock** — drift control.~~ **[done]**
+5. **#6–#10** — polish and resilience. ← next
 
 ### Not adopting from Three Man Team
 - **Exactly three agents** — AgentForge's six-role org is intentional; the reference's "resist a fourth"
