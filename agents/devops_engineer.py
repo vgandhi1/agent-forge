@@ -49,32 +49,40 @@ class DevOpsEngineerAgent(BaseAgent):
         context = await self._build_dynamic_context()
         sprint_goal = task.get("sprint_goal", "")
 
-        response = await self._call_llm(
+        written_files: list[str] = []
+
+        async def write_file_handler(tool_input: dict) -> str:
+            path = tool_input["path"]
+            full_path = await self.artifacts.write(path, tool_input["content"])
+            written_files.append(str(full_path))
+            await self.memory.remember(f"wrote_{path}", str(full_path), "artifact_ref")
+            self.console.log(f"[red]DevOps[/red] wrote: {full_path}")
+            remaining = [f for f in _DEVOPS_FILES if not any(f in w for w in written_files)]
+            hint = f" Remaining: {', '.join(remaining)}" if remaining else " All files written."
+            return f"Wrote {path} ({len(tool_input.get('content', ''))} bytes).{hint}"
+
+        await self.run_tool_loop(
             user_message=(
                 f"Write production deployment configuration for DailyEase.\n\n"
                 f"Sprint goal (context): {sprint_goal}\n\n"
                 f"Architecture Summary:\n```markdown\n{arch_doc[:2000]}\n```\n\n"
                 f"QA Report:\n```markdown\n{qa_report[:1500]}\n```\n\n"
                 f"Task: {task['task_description']}\n\n"
-                f"Write ALL of these files using write_file:\n"
+                f"Write ALL of these files using write_file — one call per file, "
+                f"continuing across turns until all are written:\n"
                 + "\n".join(f"- {f}" for f in _DEVOPS_FILES)
                 + "\n\nRequirements:\n"
                 f"- Dockerfile: multi-stage build, non-root user, HEALTHCHECK instruction\n"
                 f"- docker-compose.yml: app + volume for SQLite persistence + health check\n"
                 f"- CI workflow: lint (ruff) + type check (mypy) + pytest + docker build + push to ghcr.io\n"
-                f"- deployment.md: complete runbook (local dev, staging, production)"
+                f"- deployment.md: complete runbook (local dev, staging, production)\n"
+                f"Reply without a tool call only when all files are written."
             ),
+            tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=_TOOLS,
+            max_steps=20,
         )
-
-        written_files: list[str] = []
-        for tool_name, tool_input in self._extract_tool_calls(response):
-            if tool_name == "write_file":
-                full_path = await self.artifacts.write(tool_input["path"], tool_input["content"])
-                written_files.append(str(full_path))
-                await self.memory.remember(f"wrote_{tool_input['path']}", str(full_path), "artifact_ref")
-                self.console.log(f"[red]DevOps[/red] wrote: {full_path}")
 
         primary_path = "docs/deployment.md"
 
@@ -105,23 +113,29 @@ class DevOpsEngineerAgent(BaseAgent):
         arch_doc = await self.artifacts.read("docs/architecture.md")
         context = await self._build_dynamic_context()
 
-        response = await self._call_llm(
+        written_files: list[str] = []
+
+        async def write_file_handler(tool_input: dict) -> str:
+            path = tool_input["path"]
+            full_path = await self.artifacts.write(path, tool_input["content"])
+            written_files.append(str(full_path))
+            self.console.log(f"[red]DevOps[/red] revised: {full_path}")
+            return f"Wrote {path} ({len(tool_input.get('content', ''))} bytes)."
+
+        await self.run_tool_loop(
             user_message=(
                 f"Revise deployment configs per feedback:\n{notes}\n\n"
                 f"Task: {task.get('task_description', '')}\n\n"
                 f"Architecture:\n```markdown\n{arch_doc[:2500]}\n```\n\n"
                 f"QA Report:\n```markdown\n{qa_report[:2000]}\n```\n\n"
-                f"Rewrite affected files using write_file."
+                f"Rewrite affected files using write_file. "
+                f"Reply without a tool call only when all fixes are written."
             ),
+            tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=_TOOLS,
+            max_steps=20,
         )
-
-        written_files: list[str] = []
-        for tool_name, tool_input in self._extract_tool_calls(response):
-            if tool_name == "write_file":
-                full_path = await self.artifacts.write(tool_input["path"], tool_input["content"])
-                written_files.append(str(full_path))
 
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,

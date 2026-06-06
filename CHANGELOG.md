@@ -2,6 +2,10 @@
 
 Document **user-visible** changes (CLI flags, behavior, public docs, breaking renames of user-facing concepts). **Skip** entries for internal-only refactors—e.g. module/symbol renames or log identifiers that do not change how users run AgentForge.
 
+## 0.2.4 — 2026-06-06
+
+- **Agents:** Multi-turn tool loop. Agents now execute a tool, feed the result back to the model, and continue across turns until the work is done — so large jobs (e.g. the Backend's 20+ files) complete in full instead of being truncated into a single response. All six file-writing roles (PM, Architect, Backend, QA, DevOps) use the loop, including revision passes. Works on both Anthropic and Ollama; prompt caching preserved.
+
 ## 0.2.3 — 2026-05-10
 
 - **README:** Clone/`cd agent-forge` example instead of a placeholder path.

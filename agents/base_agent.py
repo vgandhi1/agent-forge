@@ -103,7 +103,9 @@ def _ollama_message_to_fake_anthropic_message(
         cache_read_input_tokens=0,
         cache_creation_input_tokens=0,
     )
-    return SimpleNamespace(content=blocks, usage=usage)
+    has_tool_use = any(getattr(b, "type", None) == "tool_use" for b in blocks)
+    stop_reason = "tool_use" if has_tool_use else "end_turn"
+    return SimpleNamespace(content=blocks, usage=usage, stop_reason=stop_reason)
 
 
 SYSTEM_PROMPTS: dict[str, str] = {
@@ -298,14 +300,9 @@ class BaseAgent(ABC):
             return await self._call_ollama(user_message, dynamic_context, tools)
         return await self._call_anthropic(user_message, dynamic_context, tools)
 
-    async def _call_ollama(
-        self,
-        user_message: str,
-        dynamic_context: str = "",
-        tools: list[dict] | None = None,
-    ) -> Any:
-        origin = ollama_chat_origin()
-        model = ollama_model_for_role(self.role)
+    def _ollama_initial_messages(
+        self, user_message: str, dynamic_context: str = ""
+    ) -> list[dict[str, Any]]:
         ollama_messages: list[dict[str, Any]] = [
             {"role": "system", "content": self._system_prompt},
         ]
@@ -319,6 +316,24 @@ class BaseAgent(ABC):
                 "content": "Sprint context acknowledged. Ready for my task.",
             })
         ollama_messages.append({"role": "user", "content": user_message})
+        return ollama_messages
+
+    async def _call_ollama(
+        self,
+        user_message: str,
+        dynamic_context: str = "",
+        tools: list[dict] | None = None,
+    ) -> Any:
+        ollama_messages = self._ollama_initial_messages(user_message, dynamic_context)
+        return await self._ollama_create(ollama_messages, tools)
+
+    async def _ollama_create(
+        self,
+        ollama_messages: list[dict[str, Any]],
+        tools: list[dict] | None = None,
+    ) -> Any:
+        origin = ollama_chat_origin()
+        model = ollama_model_for_role(self.role)
 
         body: dict[str, Any] = {
             "model": model,
@@ -358,10 +373,34 @@ class BaseAgent(ABC):
         assert last_err is not None
         raise last_err
 
+    def _anthropic_initial_messages(
+        self, user_message: str, dynamic_context: str = ""
+    ) -> list[dict]:
+        messages: list[dict] = []
+        if dynamic_context.strip():
+            messages.append({
+                "role": "user",
+                "content": f"<sprint_context>\n{dynamic_context}\n</sprint_context>",
+            })
+            messages.append({
+                "role": "assistant",
+                "content": "Sprint context acknowledged. Ready for my task.",
+            })
+        messages.append({"role": "user", "content": user_message})
+        return messages
+
     async def _call_anthropic(
         self,
         user_message: str,
         dynamic_context: str = "",
+        tools: list[dict] | None = None,
+    ) -> anthropic.types.Message:
+        messages = self._anthropic_initial_messages(user_message, dynamic_context)
+        return await self._anthropic_create(messages, tools)
+
+    async def _anthropic_create(
+        self,
+        messages: list[dict],
         tools: list[dict] | None = None,
     ) -> anthropic.types.Message:
         if self.client is None:
@@ -374,19 +413,6 @@ class BaseAgent(ABC):
                 "cache_control": {"type": "ephemeral"},
             }
         ]
-
-        messages: list[dict] = []
-        if dynamic_context.strip():
-            messages.append({
-                "role": "user",
-                "content": f"<sprint_context>\n{dynamic_context}\n</sprint_context>",
-            })
-            messages.append({
-                "role": "assistant",
-                "content": "Sprint context acknowledged. Ready for my task.",
-            })
-
-        messages.append({"role": "user", "content": user_message})
 
         kwargs: dict[str, Any] = {
             "model": model,
@@ -476,6 +502,103 @@ class BaseAgent(ABC):
             if getattr(block, "type", None) == "text" and hasattr(block, "text"):
                 parts.append(block.text)
         return "\n".join(parts)
+
+    async def run_tool_loop(
+        self,
+        user_message: str,
+        tool_handlers: dict[str, Any],
+        dynamic_context: str = "",
+        tools: list[dict] | None = None,
+        max_steps: int = 16,
+    ) -> dict[str, Any]:
+        """Multi-turn agentic loop: call → execute tools → feed results back → repeat.
+
+        ``tool_handlers`` maps a tool name to an async callable ``(tool_input: dict) -> str``.
+        The returned string is sent back to the model as the ``tool_result`` so it can
+        continue (e.g. write the next file) until it stops requesting tools or ``max_steps``
+        is reached. Keeping the system prompt and tools block stable across iterations
+        preserves the prompt cache.
+
+        Returns ``{"final_text", "tool_calls", "results", "steps", "stop"}``.
+        """
+        is_ollama = self._llm_provider == "ollama"
+        if is_ollama:
+            messages: list[Any] = self._ollama_initial_messages(user_message, dynamic_context)
+        else:
+            messages = self._anthropic_initial_messages(user_message, dynamic_context)
+
+        all_calls: list[tuple[str, dict]] = []
+        results: list[tuple[str, dict, str]] = []
+        text_parts: list[str] = []
+        stop = "max_steps"
+        step = 0
+
+        for step in range(max_steps):
+            if is_ollama:
+                response = await self._ollama_create(messages, tools)
+            else:
+                response = await self._anthropic_create(messages, tools)
+
+            step_text = self._extract_text(response)
+            if step_text:
+                text_parts.append(step_text)
+
+            tool_blocks = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
+
+            if not tool_blocks or getattr(response, "stop_reason", None) != "tool_use":
+                stop = "done"
+                break
+
+            tool_result_blocks: list[dict] = []
+            for block in tool_blocks:
+                name = block.name
+                tool_input = block.input
+                all_calls.append((name, tool_input))
+                handler = tool_handlers.get(name)
+                if handler is None:
+                    result_str = f"ERROR: no handler registered for tool {name!r}"
+                else:
+                    try:
+                        result_str = await handler(tool_input)
+                    except Exception as e:  # surface failure to the model, don't crash the loop
+                        result_str = f"ERROR: {type(e).__name__}: {e}"
+                        _log.warning("tool_handler_error role=%s tool=%s err=%s", self.role, name, e)
+                results.append((name, tool_input, result_str))
+                tool_result_blocks.append({
+                    "type": "tool_result",
+                    "tool_use_id": getattr(block, "id", name),
+                    "content": result_str,
+                })
+
+            if is_ollama:
+                # Ollama has no guaranteed tool_result role — feed results back as a user turn.
+                joined = "\n".join(f"- {n}: {r}" for n, _, r in results[-len(tool_blocks):])
+                messages.append({"role": "assistant", "content": step_text or " "})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Tool results:\n{joined}\n\n"
+                        "Continue with any remaining work — call the tool again for each "
+                        "remaining file. Reply without a tool call only when fully done."
+                    ),
+                })
+            else:
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user", "content": tool_result_blocks})
+        else:
+            _log.warning("tool_loop hit max_steps role=%s steps=%s", self.role, max_steps)
+
+        self.console.log(
+            f"[dim cyan]{self.role}[/dim cyan] tool loop: {len(all_calls)} calls, "
+            f"{step + 1} steps ({stop})"
+        )
+        return {
+            "final_text": "\n".join(text_parts),
+            "tool_calls": all_calls,
+            "results": results,
+            "steps": step + 1,
+            "stop": stop,
+        }
 
     @abstractmethod
     async def run(self) -> None:
