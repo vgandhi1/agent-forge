@@ -66,11 +66,22 @@ Migrated all six file-writing agents (PM, Architect, Backend, QA, DevOps incl. r
 loop. Tests: `tests/test_tool_loop.py` (iterate-then-stop, max_steps cap, handler-error surfaced).
 *Unblocks #3 and #4.*
 
-### 2. No human gate / deploy gate
-**Where:** `lead.py` `run_development_cycle`, `devops_engineer.py`.
-**Problem:** Fully autonomous, no human checkpoint, no deploy gate. DevOps writes Dockerfile/compose/CI
-as artifacts but nothing commits, deploys, or confirms a deploy landed.
-**Fix:** Optional approval pause before final phase (config-flagged); real commit/verify step in DevOps.
+### 2. No human gate / deploy gate **[done]**
+**Where:** `agents/lead.py` `_finalize_sprint`, `core/deploy.py` (new), `cli.py`.
+**Problem:** Fully autonomous, no human checkpoint, no deploy gate. DevOps wrote Dockerfile/compose/CI
+as artifacts but nothing verified, committed, or confirmed a deploy.
+**Shipped:** After all phases the Lead runs a deploy gate (`_finalize_sprint`):
+1. **Verify** — `core.deploy.run_pytest_smoke` runs the generated app's tests as a smoke check
+   (pass / fail / skipped).
+2. **Human sign-off** — opt-in via `--deploy-gate` / `AGENTFORGE_DEPLOY_GATE`. Presents a summary
+   (accepted artifacts, quality-debt flags, open escalations, verify result) and asks go/no-go.
+   No TTY → does not approve (fail-safe); `--auto-approve` for unattended deploys. Default off →
+   existing autonomous behavior unchanged.
+3. **Commit** — opt-in via `--deploy-commit` / `AGENTFORGE_DEPLOY_COMMIT`: commits the generated
+   `workspace/dailyease` app to its own git repo (init if needed; never touches the AgentForge repo).
+4. **Record** — writes `reports/deploy_record.md` (timestamp, decision, verify status, commit, summary)
+   and remembers the deploy decision. Declined deploys are recorded as `aborted` and ship nothing.
+Tests: `tests/test_deploy_gate.py` (autonomous, declined, auto-approve+commit).
 
 ### 3. Lead review is a rubber stamp **[done]**
 **Where:** `lead.py` — `_review_artifact`.
@@ -123,8 +134,8 @@ at the approval gate. Tests in `tests/test_reviewer.py`.
 ### Recommended order
 1. ~~**#1 multi-turn tool loop** — foundational; complete artifacts.~~ **[done]**
 2. ~~**#3 + #4 real review** — meaningful only after #1.~~ **[done]**
-3. **#2 deploy / human gate** — accountability before shipping. ← next
-4. **#5 scope lock** — drift control.
+3. ~~**#2 deploy / human gate** — accountability before shipping.~~ **[done]**
+4. **#5 scope lock** — drift control. ← next
 5. **#6–#10** — polish and resilience.
 
 ### Not adopting from Three Man Team

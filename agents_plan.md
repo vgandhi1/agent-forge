@@ -264,6 +264,8 @@ python main.py --dry-run
 | `AGENTFORGE_THINKING` | `false` | Enable extended thinking (Anthropic only) |
 | `AGENTFORGE_THINKING_BUDGET` | `8000` | Token budget for thinking |
 | `AGENTFORGE_API_RETRIES` | `4` | Retries for rate limits, timeouts, connection errors, HTTP 5xx on Anthropic |
+| `AGENTFORGE_DEPLOY_GATE` | unset | Set to `1` to require human sign-off before the deploy step (CLI: `--deploy-gate`; `--auto-approve` for unattended) |
+| `AGENTFORGE_DEPLOY_COMMIT` | unset | Set to `1` to commit the generated `workspace/dailyease` app to its own git repo on deploy (CLI: `--deploy-commit`) |
 | `UV_ENV_FILE` | (unset) | Optional: path passed to `uv run` so variables load from that file |
 
 ### Upgrade to Opus 4.7

@@ -1,4 +1,8 @@
+import asyncio
 import logging
+import sys
+from datetime import UTC, datetime
+
 from rich.panel import Panel
 from rich.text import Text
 
@@ -6,6 +10,7 @@ from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
 from core.phases import DEFAULT_PHASES
+from core import deploy
 from .base_agent import BaseAgent
 from .reviewer import ReviewerAgent
 
@@ -93,6 +98,9 @@ class LeadAgent(BaseAgent):
         # Independent reviewer consulted at the approval gate (see _review_artifact).
         self.reviewer = ReviewerAgent("reviewer", bus, artifact_store, console)
         self._current_brief: str = ""
+        # Deploy gate hooks — overridable in tests. Defaults do real I/O.
+        self._approval_fn = self._default_approval
+        self._verify_fn = self._default_verify
 
     async def run(self) -> None:
         pass  # Lead is driven by run_development_cycle, not the message loop
@@ -101,6 +109,10 @@ class LeadAgent(BaseAgent):
         self,
         goal: str,
         phases: list[tuple[str, str]] | None = None,
+        *,
+        deploy_gate: bool = False,
+        auto_approve: bool = False,
+        deploy_commit: bool = False,
     ) -> None:
         phase_list = phases if phases is not None else DEFAULT_PHASES
         self.console.print(Panel(
@@ -119,6 +131,13 @@ class LeadAgent(BaseAgent):
             title="[bold green]Sprint Complete[/bold green]",
             border_style="green",
         ))
+
+        await self._finalize_sprint(
+            goal,
+            deploy_gate=deploy_gate,
+            auto_approve=auto_approve,
+            deploy_commit=deploy_commit,
+        )
 
     async def _run_phase(self, agent_role: str, phase_description: str, goal: str) -> None:
         self.console.rule(f"[bold yellow]Phase: {agent_role.upper()}[/bold yellow]")
@@ -306,3 +325,119 @@ class LeadAgent(BaseAgent):
         ))
         self.console.log(f"[yellow]Reviewer rejected {agent_role} artifact ({len(must_fix)} must-fix)[/yellow]")
         return False
+
+    # ------------------------------------------------------------------ deploy gate
+
+    async def _default_verify(self) -> tuple[str, str]:
+        return await deploy.run_pytest_smoke(self.artifacts.dailyease_root())
+
+    async def _default_approval(self, summary: str) -> bool:
+        """Interactive go/no-go. Without a TTY, do not approve (fail safe)."""
+        if not sys.stdin.isatty():
+            self.console.log(
+                "[yellow]Deploy gate enabled but no interactive terminal — not approving "
+                "(use --auto-approve for unattended deploys).[/yellow]"
+            )
+            return False
+        self.console.print(summary)
+        loop = asyncio.get_event_loop()
+        answer = await loop.run_in_executor(
+            None, lambda: input("Approve deploy? [y/N] ").strip().lower()
+        )
+        return answer in ("y", "yes")
+
+    async def _build_deploy_summary(self, goal: str) -> str:
+        decisions = await self.memory.recall_all("decision")
+        debts = {k: v for k, v in decisions.items() if k.startswith("quality_debt_")}
+        escalations = {k: v for k, v in decisions.items() if k.startswith("escalation_")}
+
+        lines = ["## Deploy summary", f"Sprint goal: {goal.strip().splitlines()[0] if goal.strip() else '(none)'}", ""]
+        if self._approved_artifacts:
+            lines.append("Accepted artifacts:")
+            lines += [f"- {k}: {v}" for k, v in self._approved_artifacts.items()]
+        else:
+            lines.append("No artifacts were accepted.")
+        if debts:
+            lines += ["", "⚠ Unresolved review findings (quality debt):"]
+            lines += [f"- {v}" for v in debts.values()]
+        if escalations:
+            lines += ["", "⚠ Open escalations:"]
+            lines += [f"- {v}" for v in escalations.values()]
+        return "\n".join(lines)
+
+    async def _finalize_sprint(
+        self,
+        goal: str,
+        *,
+        deploy_gate: bool,
+        auto_approve: bool,
+        deploy_commit: bool,
+    ) -> None:
+        self.console.rule("[bold blue]Deploy gate[/bold blue]")
+
+        summary = await self._build_deploy_summary(goal)
+        verify_status, verify_detail = await self._verify_fn()
+        self.console.log(f"[blue]Verify (pytest smoke): {verify_status}[/blue]")
+        _lead_log.info("deploy_verify status=%s", verify_status)
+        summary += f"\n\nVerification (pytest smoke): {verify_status}"
+
+        if not deploy_gate:
+            self.console.log(
+                "[dim]Deploy gate disabled — autonomous run, no human sign-off requested. "
+                "Set --deploy-gate to require approval.[/dim]"
+            )
+            decision = "autonomous"
+        else:
+            if verify_status == "fail":
+                self.console.log("[red]Verification failed — review the smoke test before approving.[/red]")
+            approved = True if auto_approve else await self._approval_fn(summary)
+            if not approved:
+                self.console.print(Panel(
+                    Text("Deploy declined. Nothing was shipped.", style="bold red"),
+                    title="[bold red]Deploy Aborted[/bold red]",
+                    border_style="red",
+                ))
+                await self._write_deploy_record(goal, "aborted", verify_status, verify_detail, commit_info=None)
+                return
+            decision = "approved (auto)" if auto_approve else "approved"
+
+        commit_info: str | None = None
+        if deploy_commit:
+            ok, info = await deploy.git_commit_dir(
+                self.artifacts.dailyease_root(),
+                f"Deploy DailyEase — {goal.strip().splitlines()[0] if goal.strip() else 'sprint'}",
+            )
+            commit_info = f"{'committed ' + info if ok else 'commit skipped: ' + info}"
+            level = "green" if ok else "yellow"
+            self.console.log(f"[{level}]Deploy commit: {commit_info}[/{level}]")
+
+        record_path = await self._write_deploy_record(goal, decision, verify_status, verify_detail, commit_info)
+        self.console.print(Panel(
+            Text(f"Deploy recorded ({decision}). See {record_path}", style="bold green"),
+            title="[bold green]Deploy Gate Complete[/bold green]",
+            border_style="green",
+        ))
+
+    async def _write_deploy_record(
+        self,
+        goal: str,
+        decision: str,
+        verify_status: str,
+        verify_detail: str,
+        commit_info: str | None,
+    ) -> str:
+        ts = datetime.now(UTC).isoformat()
+        summary = await self._build_deploy_summary(goal)
+        body = [
+            "# Deploy Record",
+            f"Timestamp: {ts}",
+            f"Decision: {decision}",
+            f"Verification: {verify_status}",
+        ]
+        if commit_info is not None:
+            body.append(f"Commit: {commit_info}")
+        body += ["", summary, "", "## Verification detail", "```", verify_detail.strip() or "(none)", "```", ""]
+        path = "reports/deploy_record.md"
+        await self.artifacts.write(path, "\n".join(body))
+        await self.memory.remember("deploy_decision", decision, "decision")
+        return path

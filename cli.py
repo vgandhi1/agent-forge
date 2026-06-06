@@ -126,7 +126,15 @@ def _list_artifacts(console: Console) -> None:
     console.print(table)
 
 
-async def _run_cycle(goal: str, phases: list[tuple[str, str]] | None, skip_summary: bool) -> None:
+async def _run_cycle(
+    goal: str,
+    phases: list[tuple[str, str]] | None,
+    skip_summary: bool,
+    *,
+    deploy_gate: bool = False,
+    auto_approve: bool = False,
+    deploy_commit: bool = False,
+) -> None:
     console = Console()
 
     from core.memory import init_db
@@ -161,7 +169,13 @@ async def _run_cycle(goal: str, phases: list[tuple[str, str]] | None, skip_summa
     ]
 
     try:
-        await agents_map["lead"].run_development_cycle(goal, phases=phases)
+        await agents_map["lead"].run_development_cycle(
+            goal,
+            phases=phases,
+            deploy_gate=deploy_gate,
+            auto_approve=auto_approve,
+            deploy_commit=deploy_commit,
+        )
     finally:
         for role in ["pm", "architect", "backend", "qa", "devops"]:
             await bus.publish(Message(
@@ -245,6 +259,22 @@ def main() -> None:
         help="Skip artifact table at end (for scripted / TUI subprocess runs)",
     )
     parser.add_argument(
+        "--deploy-gate",
+        action="store_true",
+        help="Require human sign-off before the deploy step (env: AGENTFORGE_DEPLOY_GATE=1)",
+    )
+    parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="With --deploy-gate, approve automatically (unattended deploys)",
+    )
+    parser.add_argument(
+        "--deploy-commit",
+        action="store_true",
+        help="Commit the generated workspace/dailyease app to its own git repo on deploy "
+        "(env: AGENTFORGE_DEPLOY_COMMIT=1)",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging to stderr (agentforge loggers)",
@@ -314,6 +344,11 @@ def main() -> None:
                 f"  {r}: {anthropic_model_for_role(r)}" for r in roles
             )
             model_block = f"[bold]Per-role Anthropic models:[/bold]\n{model_lines}"
+        gate_on = args.deploy_gate or os.getenv("AGENTFORGE_DEPLOY_GATE", "").strip().lower() in ("1", "true", "yes")
+        commit_on = args.deploy_commit or os.getenv("AGENTFORGE_DEPLOY_COMMIT", "").strip().lower() in ("1", "true", "yes")
+        gate_desc = "on" if gate_on else "off (autonomous)"
+        if gate_on and args.auto_approve:
+            gate_desc += " + auto-approve"
         console.print(Panel(
             f"[bold]LLM provider:[/bold] {provider}\n"
             f"{model_block}\n"
@@ -321,7 +356,9 @@ def main() -> None:
             f"[bold]ROOT:[/bold] {ROOT}\n"
             f"[bold]Workspace:[/bold] {WORKSPACE}\n"
             f"[bold]Preset:[/bold] {args.preset}\n"
-            f"[bold]Phases:[/bold] {phase_desc}\n\n"
+            f"[bold]Phases:[/bold] {phase_desc}\n"
+            f"[bold]Deploy gate:[/bold] {gate_desc}\n"
+            f"[bold]Deploy commit:[/bold] {'on' if commit_on else 'off'}\n\n"
             f"[bold]Sprint Goal:[/bold]\n{goal_text.strip()}",
             title="[cyan]AgentForge Dry Run[/cyan]",
         ))
@@ -334,7 +371,20 @@ def main() -> None:
         )
         sys.exit(1)
 
-    asyncio.run(_run_cycle(goal_text, phases, skip_summary=args.skip_summary))
+    def _env_flag(name: str) -> bool:
+        return os.getenv(name, "").strip().lower() in ("1", "true", "yes")
+
+    deploy_gate = args.deploy_gate or _env_flag("AGENTFORGE_DEPLOY_GATE")
+    deploy_commit = args.deploy_commit or _env_flag("AGENTFORGE_DEPLOY_COMMIT")
+
+    asyncio.run(_run_cycle(
+        goal_text,
+        phases,
+        skip_summary=args.skip_summary,
+        deploy_gate=deploy_gate,
+        auto_approve=args.auto_approve,
+        deploy_commit=deploy_commit,
+    ))
 
 
 if __name__ == "__main__":
