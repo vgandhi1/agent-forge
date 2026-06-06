@@ -72,17 +72,24 @@ loop. Tests: `tests/test_tool_loop.py` (iterate-then-stop, max_steps cap, handle
 as artifacts but nothing commits, deploys, or confirms a deploy landed.
 **Fix:** Optional approval pause before final phase (config-flagged); real commit/verify step in DevOps.
 
-### 3. Lead review is a rubber stamp
+### 3. Lead review is a rubber stamp **[done]**
 **Where:** `lead.py` — `_review_artifact`.
-**Problems:** reads only `content[:3000]` of one file (never the other ~22); `if not tool_used: approved = True`
-(silence = pass); after `max_revisions` (3) auto-accepts regardless of quality.
-**Fix:** Default to *reject* on silence; review the actual file set (ties to #1); max-revision fallthrough
-becomes a flagged escalation, not a silent pass.
+**Problems:** read only `content[:3000]` of one file (never the other ~22); `if not tool_used: approved = True`
+(silence = pass); after `max_revisions` (3) auto-accepted regardless of quality.
+**Shipped:** `_review_artifact` now delegates to the independent Reviewer (see #4), which reads the
+actual file set. A missing verdict defaults to **reject** (silence is not approval). The max-revision
+fallthrough in `_run_phase` no longer silently passes — it records a `quality_debt_<role>` decision,
+logs a warning, and accepts with an explicit `ACCEPTED WITH UNRESOLVED REVIEW FINDINGS` flag so the
+debt is visible. Reviewer `escalate` verdicts are recorded and bounced back with an escalation note.
 
-### 4. No independent reviewer role
-**Where:** Agent roster (`agents/`), `lead.py`.
-**Problem:** Lead is orchestrator AND reviewer (role conflict). QA only runs pytest; no spec-drift / correctness review.
-**Fix:** Dedicated reviewer agent reading real files (not 3KB preview) for spec compliance, drift, security, logic.
+### 4. No independent reviewer role **[done]**
+**Where:** `agents/reviewer.py` (new), `lead.py`, `agents/base_agent.py` (persona).
+**Problem:** Lead was orchestrator AND reviewer (role conflict). QA only runs pytest; no spec-drift / correctness review.
+**Shipped:** New `ReviewerAgent` with its own persona prompt and model (`AGENTFORGE_MODEL_REVIEWER` /
+`AGENTFORGE_OLLAMA_MODEL_REVIEWER`). It uses a `read_file` tool inside the multi-turn loop to read
+only the files it needs, then `submit_review` with a structured verdict (approve / reject / escalate
++ must_fix / should_fix). Distinct from QA's test execution. The Lead instantiates it and consults it
+at the approval gate. Tests in `tests/test_reviewer.py`.
 
 ### 5. No scope-lock / drift detection / Known-Gaps log
 **Where:** All worker agents; review path in `lead.py`.
@@ -114,9 +121,9 @@ becomes a flagged escalation, not a silent pass.
 **Fix:** Escalation message type so agents surface ambiguity instead of guessing.
 
 ### Recommended order
-1. **#1 multi-turn tool loop** — foundational; complete artifacts.
-2. **#3 + #4 real review** — meaningful only after #1.
-3. **#2 deploy / human gate** — accountability before shipping.
+1. ~~**#1 multi-turn tool loop** — foundational; complete artifacts.~~ **[done]**
+2. ~~**#3 + #4 real review** — meaningful only after #1.~~ **[done]**
+3. **#2 deploy / human gate** — accountability before shipping. ← next
 4. **#5 scope lock** — drift control.
 5. **#6–#10** — polish and resilience.
 

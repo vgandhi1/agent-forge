@@ -23,7 +23,8 @@ Four core modules:
 
 | Agent | Role | Artifacts Produced |
 |-------|------|--------------------|
-| **Lead** | Orchestrates all agents, reviews and approves artifacts, enforces phase gates | Sprint decisions, approval records |
+| **Lead** | Orchestrates all agents, enforces phase gates, consults the Reviewer at the approval gate | Sprint decisions, approval records |
+| **Reviewer** | Independent code review — reads the actual files and judges spec compliance, drift, security, logic, standards | Structured verdict (approve / reject / escalate) consumed by the Lead |
 | **Product Manager** | Writes requirements docs, user stories, API overviews | `workspace/docs/requirements.md` |
 | **Software Architect** | Designs system architecture, DB schema, API contracts | `workspace/docs/architecture.md` |
 | **Backend Developer** | Implements FastAPI app (models, schemas, routers, services) | `workspace/dailyease/` (20+ files) |
@@ -42,8 +43,10 @@ Lead (orchestrator)
 
 Approval loop (per agent):
   Lead sends TASK_ASSIGN ──► Agent produces artifact ──► TASK_COMPLETE
-  Lead reviews ──► ARTIFACT_APPROVED or ARTIFACT_REJECTED (with revision notes)
-  Up to 3 revision cycles before acceptance
+  Lead consults Reviewer (reads the real files) ──► verdict
+  Lead publishes ARTIFACT_APPROVED or ARTIFACT_REJECTED (with revision notes)
+  Up to 3 revision cycles; a missing verdict defaults to reject (silence ≠ approval).
+  Artifacts still failing after 3 cycles are accepted but flagged as unresolved review debt.
 ```
 
 ### Message bus (implementation)

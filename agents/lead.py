@@ -7,6 +7,7 @@ from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
 from core.phases import DEFAULT_PHASES
 from .base_agent import BaseAgent
+from .reviewer import ReviewerAgent
 
 _DELEGATION_TOOLS = [
     {
@@ -89,6 +90,9 @@ class LeadAgent(BaseAgent):
     def __init__(self, role: str, bus: MessageBus, artifact_store: ArtifactStore, console) -> None:
         super().__init__(role, bus, artifact_store, console)
         self._approved_artifacts: dict[str, str] = {}
+        # Independent reviewer consulted at the approval gate (see _review_artifact).
+        self.reviewer = ReviewerAgent("reviewer", bus, artifact_store, console)
+        self._current_brief: str = ""
 
     async def run(self) -> None:
         pass  # Lead is driven by run_development_cycle, not the message loop
@@ -152,6 +156,7 @@ class LeadAgent(BaseAgent):
 
         task_payload["approved_artifacts"] = dict(self._approved_artifacts)
         task_payload["sprint_goal"] = goal
+        self._current_brief = task_payload.get("task_description", phase_description)
 
         self.console.log(f"[cyan]Lead → {agent_role}:[/cyan] {task_payload.get('deliverable', '')}")
 
@@ -194,6 +199,14 @@ class LeadAgent(BaseAgent):
                 artifact_path = artifact.get("primary_path", artifact.get("path", ""))
                 self._approved_artifacts[f"{agent_role}_artifact"] = artifact_path
                 await self.memory.remember(f"{agent_role}_artifact", artifact_path, "artifact_ref")
+                # Flagged escalation, not a silent pass: accept to avoid deadlock, but record
+                # that review findings are unresolved so the debt is visible downstream.
+                debt_note = (
+                    f"{agent_role} artifact accepted after {max_revisions} revision cycles with "
+                    f"UNRESOLVED review findings — flagged for follow-up."
+                )
+                await self.memory.remember(f"quality_debt_{agent_role}", debt_note, "decision")
+                _lead_log.warning("quality_debt role=%s path=%s", agent_role, artifact_path)
                 await self.bus.publish(Message(
                     type=MessageType.ARTIFACT_APPROVED,
                     sender="lead",
@@ -201,85 +214,95 @@ class LeadAgent(BaseAgent):
                     payload={
                         "agent": agent_role,
                         "artifact_name": artifact_path,
-                        "approval_notes": "Accepted after maximum revision cycles",
+                        "approval_notes": (
+                            "ACCEPTED WITH UNRESOLVED REVIEW FINDINGS after max revision cycles "
+                            "(flagged for follow-up)"
+                        ),
                     },
                     priority=1,
                 ))
-                self.console.log(f"[yellow]Accepted {agent_role} artifact after max revisions[/yellow]")
+                self.console.log(
+                    f"[bold red][FLAGGED][/bold red] accepted {agent_role} artifact after max "
+                    f"revisions with unresolved review findings"
+                )
                 break
 
             self.console.log(f"[yellow]Revision {revision} requested for {agent_role}[/yellow]")
 
     async def _review_artifact(self, agent_role: str, artifact: dict, attempt: int) -> bool:
+        """Consult the independent Reviewer and act on its verdict.
+
+        The Reviewer reads the actual files (not a truncated preview) and returns a
+        structured decision. A missing verdict defaults to reject — silence is not approval.
+        """
         artifact_path = artifact.get("primary_path", artifact.get("path", ""))
-        files_written = artifact.get("files", [])
+        files_written = artifact.get("files", []) or ([artifact_path] if artifact_path else [])
         summary = artifact.get("summary", "")
 
-        self.console.log(f"[cyan]Lead reviewing {agent_role} artifact: {summary}[/cyan]")
-
-        content_preview = ""
-        if artifact_path:
-            content_preview = await self.artifacts.read(artifact_path)
-            content_preview = content_preview[:3000]
+        self.console.log(
+            f"[cyan]Reviewer auditing {agent_role} artifact (attempt {attempt + 1}): {summary}[/cyan]"
+        )
 
         context = await self._build_dynamic_context()
 
-        review_prompt = (
-            f"Review the {agent_role}'s submitted artifact (attempt {attempt + 1}).\n\n"
-            f"Summary: {summary}\n"
-            f"Files written: {files_written}\n\n"
-            f"Artifact content preview:\n```\n{content_preview}\n```\n\n"
-            f"Use approve_artifact if it meets the acceptance criteria, "
-            f"or reject_artifact with specific revision notes if it needs improvement."
-        )
-
-        response = await self._call_llm(
-            user_message=review_prompt,
+        verdict = await self.reviewer.review(
+            phase_role=agent_role,
+            summary=summary,
+            files=files_written,
+            brief=self._current_brief,
             dynamic_context=context,
-            tools=_DELEGATION_TOOLS,
         )
 
-        approved = False
-        tool_used = False
-        calls = self._extract_tool_calls(response)
-        reject_calls = [inp for name, inp in calls if name == "reject_artifact"]
-        approve_calls = [inp for name, inp in calls if name == "approve_artifact"]
+        decision = verdict.get("decision", "reject")
+        must_fix = verdict.get("must_fix") or []
+        should_fix = verdict.get("should_fix") or []
+        review_summary = verdict.get("summary", "")
 
-        for tool_name, tool_input in calls:
-            if tool_name == "record_decision":
-                await self.memory.remember(
-                    tool_input["decision_key"], tool_input["decision_value"], "decision"
-                )
+        if decision == "approve":
+            await self.bus.publish(Message(
+                type=MessageType.ARTIFACT_APPROVED,
+                sender="lead",
+                recipient=agent_role,
+                payload={
+                    "agent": agent_role,
+                    "artifact_name": artifact_path,
+                    "approval_notes": review_summary or "Reviewer approved.",
+                },
+                priority=1,
+            ))
+            self.console.log(f"[green]Reviewer approved {agent_role} artifact[/green]")
+            return True
 
-        if reject_calls:
-            approved = False
-            tool_used = True
+        if decision == "escalate":
+            question = verdict.get("escalation_question") or review_summary
+            await self.memory.remember(f"escalation_{agent_role}", question, "decision")
+            _lead_log.warning("review_escalation role=%s q=%s", agent_role, question)
+            notes = f"ESCALATION (needs a product/business decision): {question}"
+            if should_fix:
+                notes += "\n\nShould fix:\n" + "\n".join(f"- {s}" for s in should_fix)
             await self.bus.publish(Message(
                 type=MessageType.ARTIFACT_REJECTED,
                 sender="lead",
                 recipient=agent_role,
-                payload=reject_calls[-1],
+                payload={"agent": agent_role, "artifact_name": artifact_path, "revision_notes": notes},
                 priority=1,
             ))
-        elif approve_calls:
-            approved = True
-            tool_used = True
-            await self.bus.publish(Message(
-                type=MessageType.ARTIFACT_APPROVED,
-                sender="lead",
-                recipient=agent_role,
-                payload=approve_calls[-1],
-                priority=1,
-            ))
+            self.console.log(f"[magenta]Reviewer escalated {agent_role} artifact[/magenta]")
+            return False
 
-        if not tool_used:
-            approved = True
-            await self.bus.publish(Message(
-                type=MessageType.ARTIFACT_APPROVED,
-                sender="lead",
-                recipient=agent_role,
-                payload={"agent": agent_role, "artifact_name": artifact_path, "approval_notes": "Accepted"},
-                priority=1,
-            ))
-
-        return approved
+        # decision == "reject" (or anything unrecognized → treat as reject)
+        notes_parts: list[str] = []
+        if must_fix:
+            notes_parts.append("Must fix:\n" + "\n".join(f"- {m}" for m in must_fix))
+        if should_fix:
+            notes_parts.append("Should fix:\n" + "\n".join(f"- {s}" for s in should_fix))
+        revision_notes = "\n\n".join(notes_parts) or review_summary or "Revisions required."
+        await self.bus.publish(Message(
+            type=MessageType.ARTIFACT_REJECTED,
+            sender="lead",
+            recipient=agent_role,
+            payload={"agent": agent_role, "artifact_name": artifact_path, "revision_notes": revision_notes},
+            priority=1,
+        ))
+        self.console.log(f"[yellow]Reviewer rejected {agent_role} artifact ({len(must_fix)} must-fix)[/yellow]")
+        return False

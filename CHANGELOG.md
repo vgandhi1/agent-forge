@@ -4,7 +4,8 @@ Document **user-visible** changes (CLI flags, behavior, public docs, breaking re
 
 ## 0.2.4 — 2026-06-06
 
-- **Agents:** Multi-turn tool loop. Agents now execute a tool, feed the result back to the model, and continue across turns until the work is done — so large jobs (e.g. the Backend's 20+ files) complete in full instead of being truncated into a single response. All six file-writing roles (PM, Architect, Backend, QA, DevOps) use the loop, including revision passes. Works on both Anthropic and Ollama; prompt caching preserved.
+- **Agents:** Multi-turn tool loop. Agents now execute a tool, feed the result back to the model, and continue across turns until the work is done — so large jobs (e.g. the Backend's 20+ files) complete in full instead of being truncated into a single response. All file-writing roles (PM, Architect, Backend, QA, DevOps) use the loop, including revision passes. Works on both Anthropic and Ollama; prompt caching preserved.
+- **Review gate:** New independent Reviewer agent. It reads the actual files an agent produced (not a truncated preview) and returns a structured verdict (approve / reject / escalate with specific fixes). The Lead now consults the Reviewer at the approval gate instead of self-approving. Unclear or missing verdicts default to *reject*; artifacts accepted after the max revision cycles are explicitly flagged as carrying unresolved findings rather than passing silently. Reviewer model is configurable per role (`AGENTFORGE_MODEL_REVIEWER` / `AGENTFORGE_OLLAMA_MODEL_REVIEWER`).
 
 ## 0.2.3 — 2026-05-10
 
