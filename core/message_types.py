@@ -13,6 +13,7 @@ class MessageType(str, Enum):
     ARTIFACT_REJECTED = "artifact_rejected"
     CONSULT_REQUEST = "consult_request"
     CONSULT_RESPONSE = "consult_response"
+    ESCALATION = "escalation"
     SHUTDOWN = "shutdown"
 
 

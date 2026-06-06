@@ -198,6 +198,11 @@ class LeadAgent(BaseAgent):
             if result_msg.type == MessageType.SHUTDOWN:
                 break
 
+            if result_msg.type == MessageType.ESCALATION:
+                q = result_msg.payload.get("question", "")
+                self.console.log(f"[magenta]Escalation from {agent_role}:[/magenta] {q[:80]}")
+                continue  # already recorded by the agent; will surface at the deploy gate
+
             if result_msg.type != MessageType.TASK_COMPLETE:
                 self.console.log(f"[yellow]Unexpected message type: {result_msg.type}[/yellow]")
                 continue

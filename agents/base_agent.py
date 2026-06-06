@@ -326,10 +326,38 @@ _LOG_KNOWN_GAP_TOOL = {
     },
 }
 
+_REQUEST_DECISION_TOOL = {
+    "name": "request_decision",
+    "description": (
+        "Escalate an ambiguous decision to the Lead/Owner instead of guessing, when the brief is "
+        "unclear and the wrong choice has downstream consequences. State the assumption you will "
+        "proceed with so work is not blocked."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "question": {
+                "type": "string",
+                "description": "The decision you cannot make from the brief alone",
+            },
+            "options": {
+                "type": "string",
+                "description": "The viable options you see (if any)",
+            },
+            "assumption": {
+                "type": "string",
+                "description": "The default you will proceed with, clearly labeled, so work continues",
+            },
+        },
+        "required": ["question"],
+    },
+}
+
 _SCOPE_LOCK_NOTE = (
     "\n\nScope lock: do exactly this task — no more. If you find anything outside its scope "
     "(other bugs, missing features, refactors), call log_known_gap to record it and move on. "
-    "Do not expand scope to fix it."
+    "Do not expand scope to fix it. If the brief is ambiguous and the wrong guess has downstream "
+    "consequences, call request_decision rather than guessing, then proceed with your stated assumption."
 )
 
 
@@ -353,6 +381,7 @@ class BaseAgent(ABC):
             self.client = AsyncAnthropic()
         self.console = console
         self._system_prompt = SYSTEM_PROMPTS[role]
+        self._escalation_count = 0
         bus.register(role)
 
     async def _call_llm(
@@ -579,6 +608,33 @@ class BaseAgent(ABC):
         self.console.log(f"[dim]{self.role} logged known gap ({category}): {description[:60]}[/dim]")
         return "Known gap recorded; stay in scope and continue the current task."
 
+    async def _request_decision_handler(self, tool_input: dict) -> str:
+        question = tool_input.get("question", "").strip()
+        if not question:
+            return "Ignored: request_decision needs a question."
+        options = tool_input.get("options", "").strip()
+        assumption = tool_input.get("assumption", "").strip()
+        self._escalation_count += 1
+        key = f"escalation_{self.role}_{self._escalation_count}"
+        value = f"Q: {question}"
+        if options:
+            value += f" | options: {options}"
+        if assumption:
+            value += f" | proceeding with: {assumption}"
+        await self.memory.remember(key, value, "decision")
+        self.console.log(f"[magenta]{self.role} escalated decision:[/magenta] {question[:70]}")
+        await self.bus.publish(Message(
+            type=MessageType.ESCALATION,
+            sender=self.role,
+            recipient="lead",
+            payload={"role": self.role, "question": question, "options": options, "assumption": assumption},
+            priority=2,
+        ))
+        return (
+            "Escalation recorded for the Lead/Owner (it will surface at the deploy gate). "
+            "Proceed with your stated assumption, clearly labeled in the work, and continue."
+        )
+
     async def run_tool_loop(
         self,
         user_message: str,
@@ -607,7 +663,10 @@ class BaseAgent(ABC):
         if scope_lock:
             if not any(t.get("name") == "log_known_gap" for t in effective_tools):
                 effective_tools.append(_LOG_KNOWN_GAP_TOOL)
+            if not any(t.get("name") == "request_decision" for t in effective_tools):
+                effective_tools.append(_REQUEST_DECISION_TOOL)
             handlers.setdefault("log_known_gap", self._log_known_gap_handler)
+            handlers.setdefault("request_decision", self._request_decision_handler)
             user_message = user_message + _SCOPE_LOCK_NOTE
         tools = effective_tools or None
         tool_handlers = handlers
