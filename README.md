@@ -32,7 +32,7 @@ deferred Known-Gaps log, an escalation channel for ambiguity, and an optional de
    ```bash
    cp .env.example .env
    ```
-   Edit `.env` and set **`ANTHROPIC_API_KEY`** for Claude, or **`AGENTFORGE_LLM_PROVIDER=ollama`** for local models (see `agents_plan.md` and `.env.example`).
+   Edit `.env` and set **`ANTHROPIC_API_KEY`** for Claude, or **`AGENTFORGE_LLM_PROVIDER=ollama`** for local models (full setup incl. Windows-Ollama + WSL: **[docs/ollama.md](docs/ollama.md)**).
 
 **Ways those variables reach the process:**
 
@@ -110,6 +110,7 @@ Missing packages → run `uv sync` (or `pip install -r requirements.txt`). API e
 ## Full instructions
 
 - **[USAGE.md](USAGE.md)** — CLI, TUI, web UI, presets, pip fallback, troubleshooting  
+- **[docs/ollama.md](docs/ollama.md)** — run on local models; Windows-Ollama + WSL setup, model choice  
 - **[agents_plan.md](agents_plan.md)** — architecture, env var table, deployment phases  
 - **[docs/github-repository.md](docs/github-repository.md)** — GitHub description, topics, `gh repo create`, public vs private  
 

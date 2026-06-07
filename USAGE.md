@@ -94,7 +94,9 @@ Set variables the same way: **edit `.env`** (loaded by dotenv) and/or **export**
 
 Set `AGENTFORGE_LLM_PROVIDER=ollama` and run [Ollama](https://ollama.com/) (`ollama serve`). Each role can use a different model via `AGENTFORGE_OLLAMA_MODEL_LEAD`, `AGENTFORGE_OLLAMA_MODEL_PM`, … (see `.env.example`). Defaults fall back to `AGENTFORGE_OLLAMA_MODEL` or `llama3.2`. Use models that support **tool calling** for best results.
 
-`AGENTFORGE_OLLAMA_HOST` must resolve to **loopback** by default (SSRF-safe). For Docker Compose on a private bridge, set `AGENTFORGE_OLLAMA_TRUST_LAN=1` and read the warning in `.env.example`.
+`AGENTFORGE_OLLAMA_HOST` must resolve to **loopback** by default (SSRF-safe). For Docker Compose on a private bridge — or **Ollama on Windows with AgentForge in WSL2** — set `AGENTFORGE_OLLAMA_TRUST_LAN=1` and read the warning in `.env.example`.
+
+**Full Ollama setup** (install, model choice, the Windows-Ollama + WSL2 topology, connectivity tests, troubleshooting): **[docs/ollama.md](docs/ollama.md)**.
 
 The **web UI** exposes provider choice, Ollama URL, **Refresh models**, and per-role model fields; those values are passed into the run as environment overrides.
 
