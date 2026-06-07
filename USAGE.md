@@ -94,7 +94,9 @@ Set variables the same way: **edit `.env`** (loaded by dotenv) and/or **export**
 
 Set `AGENTFORGE_LLM_PROVIDER=ollama` and run [Ollama](https://ollama.com/) (`ollama serve`). Each role can use a different model via `AGENTFORGE_OLLAMA_MODEL_LEAD`, `AGENTFORGE_OLLAMA_MODEL_PM`, … (see `.env.example`). Defaults fall back to `AGENTFORGE_OLLAMA_MODEL` or `llama3.2`. Use models that support **tool calling** for best results.
 
-`AGENTFORGE_OLLAMA_HOST` must resolve to **loopback** by default (SSRF-safe). For Docker Compose on a private bridge, set `AGENTFORGE_OLLAMA_TRUST_LAN=1` and read the warning in `.env.example`.
+`AGENTFORGE_OLLAMA_HOST` must resolve to **loopback** by default (SSRF-safe). For Docker Compose on a private bridge — or **Ollama on Windows with AgentForge in WSL2** — set `AGENTFORGE_OLLAMA_TRUST_LAN=1` and read the warning in `.env.example`.
+
+**Full Ollama setup** (install, model choice, the Windows-Ollama + WSL2 topology, connectivity tests, troubleshooting): **[docs/ollama.md](docs/ollama.md)**.
 
 The **web UI** exposes provider choice, Ollama URL, **Refresh models**, and per-role model fields; those values are passed into the run as environment overrides.
 
@@ -114,8 +116,39 @@ Your cwd should be the **repository root**. With **uv**, prefer `uv run python �
 | List generated files | `python main.py --list-artifacts` | `uv run python main.py --list-artifacts` |
 | Debug logging | `python main.py -v --dry-run` | `uv run python main.py -v --dry-run` |
 | Log file | `python main.py -v --log-file ./run.log` | `uv run python main.py -v --log-file ./run.log` |
+| Require deploy sign-off | `python main.py --deploy-gate` | `uv run python main.py --deploy-gate` |
+| Plan-before-build (backend) | `python main.py --plan-gate --goal "…"` | `uv run python main.py --plan-gate --goal "…"` |
+| Resume completed phases | `python main.py --resume --goal "…"` | `uv run python main.py --resume --goal "…"` |
 
 `--goal-file` must point to an **existing regular file**; otherwise the CLI exits with code `2` and a short error (no traceback).
+
+### Quality gates & flags
+
+The pipeline runs autonomously by default. These flags add checkpoints; **all default off**, so leaving them unset keeps the original behavior. Always-on quality controls (independent reviewer, scope lock, escalation, selective context) need no flags.
+
+| Flag | Env var | What it does |
+|------|---------|--------------|
+| `--deploy-gate` | `AGENTFORGE_DEPLOY_GATE=1` | After all phases: run a pytest smoke check, then ask for human go/no-go before the deploy step. Without a TTY it does **not** approve (fail-safe). |
+| `--auto-approve` | — | With `--deploy-gate`, approve automatically (unattended runs). |
+| `--deploy-commit` | `AGENTFORGE_DEPLOY_COMMIT=1` | On approval, commit the generated `workspace/dailyease` app to its **own** git repo (init if needed; never touches the AgentForge repo). |
+| `--plan-gate` | `AGENTFORGE_PLAN_GATE=1` | Backend proposes a build plan; the Lead confirms or redirects before any code is written. Fail-open if no response. |
+| `--resume` | — | Skip phases already completed for the **same goal**, reading `handoff/checkpoint.json`; restores upstream artifact references. |
+
+Examples:
+
+```bash
+# Gated, attended deploy (you approve interactively)
+uv run python main.py --deploy-gate --goal "Ship reminders v2"
+
+# Gated, unattended deploy that also versions the generated app
+uv run python main.py --deploy-gate --auto-approve --deploy-commit --goal "Nightly build"
+
+# Plan-first build, then resume later if interrupted (same --goal)
+uv run python main.py --plan-gate --goal "Finance module"
+uv run python main.py --resume    --goal "Finance module"
+```
+
+Outputs from these: `reports/deploy_record.md` (deploy decision + verify result), `reports/known_gaps.md` (deferred out-of-scope items + reviewer drift), `handoff/<role>.md` and `handoff/checkpoint.json` (per-phase trail + resume state). Preview any combination with `--dry-run`.
 
 ### Presets (which agents run)
 
@@ -193,6 +226,8 @@ This repo includes `.claude/commands/agentforge.md`. Run AgentForge in a termina
 ## 6. Where outputs go
 
 - **Artifacts:** `workspace/` (docs, `dailyease/` app, `reports/`, etc.)  
+- **Reviews & gates:** `workspace/reports/deploy_record.md` (deploy decision + verify), `workspace/reports/known_gaps.md` (deferred items + reviewer drift)  
+- **Handoff trail / resume state:** `workspace/handoff/<role>.md` and `workspace/handoff/checkpoint.json`  
 - **Agent memory / logs (SQLite):** `agentforge.db` in `AGENTFORGE_ROOT` (default: repo root)
 
 ```bash
@@ -211,6 +246,8 @@ uv run python main.py --list-artifacts
 | Vars not visible to subprocess | Use `uv run --env-file .env` or `export UV_ENV_FILE=.env` |
 | `pytest` fails in **test** preset | Run `implement` or `full` first so `workspace/dailyease` exists; install that app’s `requirements.txt` into the venv if needed |
 | Web UI won’t connect | Open `127.0.0.1` and the port from `--web-port` |
+| `--deploy-gate` won’t approve | No interactive terminal → it fail-safes to *not approve*. Add `--auto-approve` for unattended runs |
+| `--resume` runs everything | Checkpoint goal must match the current `--goal`; a changed goal resets the checkpoint |
 
 ### Tests (development)
 
