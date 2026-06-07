@@ -1,7 +1,10 @@
 from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
+from core.context import condense_markdown
 from .base_agent import BaseAgent
+
+_PREFER = ["deploy", "docker", "ci", "scale", "security", "database", "api", "health", "performance"]
 
 _TOOLS = [
     {
@@ -65,8 +68,8 @@ class DevOpsEngineerAgent(BaseAgent):
             user_message=(
                 f"Write production deployment configuration for DailyEase.\n\n"
                 f"Sprint goal (context): {sprint_goal}\n\n"
-                f"Architecture Summary:\n```markdown\n{arch_doc[:2000]}\n```\n\n"
-                f"QA Report:\n```markdown\n{qa_report[:1500]}\n```\n\n"
+                f"Architecture Summary:\n```markdown\n{condense_markdown(arch_doc, 3500, _PREFER)}\n```\n\n"
+                f"QA Report:\n```markdown\n{condense_markdown(qa_report, 2500, _PREFER)}\n```\n\n"
                 f"Task: {task['task_description']}\n\n"
                 f"Write ALL of these files using write_file — one call per file, "
                 f"continuing across turns until all are written:\n"
@@ -126,8 +129,8 @@ class DevOpsEngineerAgent(BaseAgent):
             user_message=(
                 f"Revise deployment configs per feedback:\n{notes}\n\n"
                 f"Task: {task.get('task_description', '')}\n\n"
-                f"Architecture:\n```markdown\n{arch_doc[:2500]}\n```\n\n"
-                f"QA Report:\n```markdown\n{qa_report[:2000]}\n```\n\n"
+                f"Architecture:\n```markdown\n{condense_markdown(arch_doc, 3000, _PREFER)}\n```\n\n"
+                f"QA Report:\n```markdown\n{condense_markdown(qa_report, 2500, _PREFER)}\n```\n\n"
                 f"Rewrite affected files using write_file. "
                 f"Reply without a tool call only when all fixes are written."
             ),

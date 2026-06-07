@@ -6,6 +6,7 @@ import sys
 from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
+from core.context import condense_markdown
 from .base_agent import BaseAgent
 
 _TOOLS = [
@@ -183,7 +184,7 @@ class QAEngineerAgent(BaseAgent):
 
         user_message = (
                 f"Revise tests and QA report per Lead feedback:\n{notes}\n\n"
-            f"Current QA report:\n```markdown\n{report[:4000]}\n```\n\n"
+            f"Current QA report:\n```markdown\n{condense_markdown(report, 4500, ['bug', 'coverage', 'fail', 'test', 'recommendation'])}\n```\n\n"
             f"Latest pytest output:\n```\n{pytest_out[:6000]}\n```\n\n"
             f"Apply write_file to any files that need changes."
         )

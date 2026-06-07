@@ -1,7 +1,10 @@
 from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
+from core.context import condense_markdown
 from .base_agent import BaseAgent
+
+_PREFER = ["task", "habit", "finance", "wellness", "schema", "api", "endpoint", "database", "model", "router"]
 
 _TOOLS = [
     {
@@ -96,8 +99,8 @@ class BackendDeveloperAgent(BaseAgent):
             user_message=(
                 f"Implement the complete DailyEase FastAPI application.\n\n"
                 f"Sprint goal (context): {sprint_goal}\n\n"
-                f"Architecture Document:\n```markdown\n{arch_content[:4000]}\n```\n\n"
-                f"Requirements Summary:\n```markdown\n{req_content[:2000]}\n```\n\n"
+                f"Architecture Document:\n```markdown\n{condense_markdown(arch_content, 7000, _PREFER)}\n```\n\n"
+                f"Requirements Summary:\n```markdown\n{condense_markdown(req_content, 3500, _PREFER)}\n```\n\n"
                 f"Task: {task['task_description']}\n\n"
                 f"Write ALL of these files using write_file — one call per file, "
                 f"continuing across turns until every file is written:\n"
