@@ -35,6 +35,10 @@ Full flags, presets, and quality gates: [USAGE.md](USAGE.md). Local models: [oll
 Tell your assistant something like:
 > "Run `uv run python main.py --preset intake --goal '...'` from the repo root and show me the output."
 
+> "From the AgentForge repo root, run `uv run python main.py --dry-run` and tell me which provider and models it will use."
+
+> "Run the full AgentForge pipeline for this goal: `uv run python main.py --goal 'Build a habit-tracking API'`, run it in the background, and summarize the artifacts in `workspace/` when it finishes."
+
 ---
 
 ## Command set (chat-pluggable)
