@@ -83,18 +83,20 @@ agents/
 ├── cli.py                    # argparse: presets, phases, dry-run, TUI flag
 ├── tui_main.py               # Textual TUI (buttons + streamed subprocess logs)
 ├── web_ui.py                 # Local browser UI (FastAPI + WebSocket, loopback)
-├── USAGE.md                  # Step-by-step: CLI, TUI, web UI, presets
-├── CHANGELOG.md              # User-facing release notes (omit internal-only refactors)
-├── improvement.md            # Backlog / shipped improvements
-├── tests/                    # pytest (CLI, artifact_store, message_bus)
+├── tests/                    # pytest (CLI, artifact_store, message_bus, gates)
 ├── pyproject.toml            # dependencies + [tool.uv]; `agentforge` script
 ├── uv.lock                   # locked versions for `uv sync`
 ├── requirements.txt          # pip mirror of deps (optional if using uv)
-├── README.md                 # uv + env quickstart; CI badge
+├── README.md                 # uv + env quickstart; CI badge; doc index
 ├── LICENSE                   # MIT
 ├── .github/workflows/ci.yml  # pytest on push / PR
 ├── .env.example              # config template (copy to `.env`)
-├── agents_plan.md            # this file
+├── docs/
+│   ├── USAGE.md              # Step-by-step: CLI, TUI, web UI, presets, gate flags
+│   ├── running-with-ai-clis.md  # drive AgentForge from any AI coding assistant
+│   ├── ollama.md             # local models; Windows-Ollama + WSL setup
+│   ├── agents_plan.md        # this file
+│   └── github-repository.md  # GitHub repo metadata
 │
 ├── core/
 │   ├── paths.py              # AGENTFORGE_ROOT / workspace / DB resolution
@@ -172,7 +174,7 @@ The Lead uses `recall_cross_role()` to read other agents' artifact refs for revi
 
 ## Running AgentForge
 
-**Entry points:** [README.md](README.md) (uv + env quickstart) · [USAGE.md](USAGE.md) (full CLI / TUI / web / troubleshooting).
+**Entry points:** [README.md](../README.md) (uv + env quickstart) · [USAGE.md](USAGE.md) (full CLI / TUI / web / troubleshooting).
 
 ### Package environment: uv (recommended)
 

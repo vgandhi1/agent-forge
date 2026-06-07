@@ -96,7 +96,7 @@ Set `AGENTFORGE_LLM_PROVIDER=ollama` and run [Ollama](https://ollama.com/) (`oll
 
 `AGENTFORGE_OLLAMA_HOST` must resolve to **loopback** by default (SSRF-safe). For Docker Compose on a private bridge — or **Ollama on Windows with AgentForge in WSL2** — set `AGENTFORGE_OLLAMA_TRUST_LAN=1` and read the warning in `.env.example`.
 
-**Full Ollama setup** (install, model choice, the Windows-Ollama + WSL2 topology, connectivity tests, troubleshooting): **[docs/ollama.md](docs/ollama.md)**.
+**Full Ollama setup** (install, model choice, the Windows-Ollama + WSL2 topology, connectivity tests, troubleshooting): **[ollama.md](ollama.md)**.
 
 The **web UI** exposes provider choice, Ollama URL, **Refresh models**, and per-role model fields; those values are passed into the run as environment overrides.
 

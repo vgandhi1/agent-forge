@@ -101,19 +101,18 @@ uv run python main.py --resume --goal "…"
 | `--resume` | — | skip phases already completed for the same goal |
 
 Always on: independent reviewer, scope lock (`reports/known_gaps.md`), escalation channel, selective
-context. See **[USAGE.md](USAGE.md)** for full details and `--dry-run` to preview any combination.
+context. See **[USAGE.md](docs/USAGE.md)** for full details and `--dry-run` to preview any combination.
 
 ## Troubleshooting (quick)
 
-Missing packages → run `uv sync` (or `pip install -r requirements.txt`). API errors → set `ANTHROPIC_API_KEY` in `.env`. **Details:** [USAGE.md](USAGE.md) §7.
+Missing packages → run `uv sync` (or `pip install -r requirements.txt`). API errors → set `ANTHROPIC_API_KEY` in `.env`. **Details:** [USAGE.md](docs/USAGE.md) §7.
 
 ## Full instructions
 
-- **[USAGE.md](USAGE.md)** — CLI, TUI, web UI, presets, gate flags, pip fallback, troubleshooting  
+- **[docs/USAGE.md](docs/USAGE.md)** — CLI, TUI, web UI, presets, gate flags, pip fallback, troubleshooting  
+- **[docs/running-with-ai-clis.md](docs/running-with-ai-clis.md)** — drive AgentForge from any AI coding assistant (Claude Code, Cursor, Codex, …)  
 - **[docs/ollama.md](docs/ollama.md)** — run on local models; Windows-Ollama + WSL setup, model choice, diagnostics  
-- **[agents_plan.md](agents_plan.md)** — architecture, env var table, deployment phases  
-- **[CHANGELOG.md](CHANGELOG.md)** — user-visible release notes  
-- **[improvement.md](improvement.md)** — design notes & reference gap analysis (what changed and why)  
+- **[docs/agents_plan.md](docs/agents_plan.md)** — architecture, env var table, deployment phases  
 - **[docs/github-repository.md](docs/github-repository.md)** — GitHub description, topics, `gh repo create`, public vs private  
 
 Claude Code shortcut: [.claude/commands/agentforge.md](.claude/commands/agentforge.md)

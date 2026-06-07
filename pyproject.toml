@@ -41,6 +41,6 @@ packages = ["core", "agents"]
 py-modules = ["cli", "tui_main", "main", "web_ui"]
 
 # Use Astral uv for the virtualenv + locked installs: `uv sync`, then `uv run python main.py …`
-# See USAGE.md and https://docs.astral.sh/uv/
+# See docs/USAGE.md and https://docs.astral.sh/uv/
 [tool.uv]
 package = true
