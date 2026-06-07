@@ -1,53 +1,24 @@
 ---
-description: Run AgentForge multi-agent pipeline from the repo (CLI / TUI / web)
+description: Run the AgentForge multi-agent pipeline (full lifecycle) for a goal
+argument-hint: [goal text]
+allowed-tools: Bash(uv run:*), Bash(python main.py:*)
 ---
 
-Use AgentForge in this repository for structured intake, design, implementation, testing, and delivery.
-
-## Prerequisites: uv + environment variables
-
-**Packages (virtualenv):** from repo root:
+Run AgentForge's **full pipeline** (PM → Architect → Backend → QA → DevOps, with reviewer gating)
+from the repository root.
 
 ```bash
-uv sync
+uv run python main.py --goal "$ARGUMENTS"
 ```
 
-**Environment variables:** copy the template and set secrets:
+- If `$ARGUMENTS` is empty, ask the Project Owner for the goal first (or run with the built-in default).
+- First time? Ensure `uv sync` has run and `.env` is configured (Anthropic key or `AGENTFORGE_LLM_PROVIDER=ollama`).
+- Local models are slow (minutes per phase) — let it run; artifacts land under `workspace/`.
+- Preview without API calls: append `--dry-run`.
 
-```bash
-cp .env.example .env
-# Edit .env — required: ANTHROPIC_API_KEY
-```
+Sibling commands: `/agentforge-intake`, `/agentforge-design`, `/agentforge-implement`,
+`/agentforge-test`, `/agentforge-ship`, `/agentforge-improve`, `/agentforge-resume`,
+`/agentforge-artifacts`, `/agentforge-dry-run`.
 
-Runtime loading: AgentForge uses **`python-dotenv`** (loads project `.env` on startup). Optionally: `uv run --env-file .env …` or `export UV_ENV_FILE=.env` for uv’s default file.
-
-**Full guide:** [USAGE.md](../../docs/USAGE.md) · **Architecture:** [agents_plan.md](../../docs/agents_plan.md) · **Local models:** [ollama.md](../../docs/ollama.md)
-
----
-
-## Commands (use `uv run` prefix if you use uv)
-
-Replace `python main.py` with `uv run python main.py` when using uv without activating `.venv`.
-
-- Full pipeline: `python main.py` or `python main.py --preset full --goal "Your goal"`
-- Intake (PM): `python main.py --preset intake --goal "..."`  
-- Design: `python main.py --preset design --goal "..."`  
-- Implement: `python main.py --preset implement --goal "..."`  
-- Feature testing: `python main.py --preset test --goal "..."`  
-- Ship (DevOps): `python main.py --preset ship --goal "..."`  
-- Improvements: `python main.py --preset improve --goal "..."`  
-- Custom order: `python main.py --phases pm,backend,qa --goal "..."`  
-- **TUI:** `python main.py --tui`  
-- **Web UI:** `python main.py --web` → http://127.0.0.1:8755  
-- List outputs: `python main.py --list-artifacts`  
-- Dry run: `python main.py --dry-run`  
-
-**Examples with uv:**
-
-```bash
-uv run python main.py --dry-run
-uv run python main.py --preset intake --goal "Login requirements"
-uv run agentforge --list-artifacts
-```
-
-Optional env vars (in `.env` or shell): `AGENTFORGE_ROOT`, `AGENTFORGE_WORKSPACE`, `AGENTFORGE_MODEL`, `AGENTFORGE_THINKING` — see `docs/agents_plan.md`.
+Setup, flags, and local-model help: [USAGE.md](../../docs/USAGE.md) ·
+[running-with-ai-clis.md](../../docs/running-with-ai-clis.md) · [ollama.md](../../docs/ollama.md).

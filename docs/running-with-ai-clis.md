@@ -37,11 +37,44 @@ Tell your assistant something like:
 
 ---
 
+## Command set (chat-pluggable)
+
+AgentForge ships **slash commands** in `.claude/commands/` so you can drive the whole system from chat —
+type the command, pass the goal as the argument:
+
+| Slash command | What it runs | Underlying CLI |
+|---------------|--------------|----------------|
+| `/agentforge <goal>` | Full pipeline (PM → Architect → Backend → QA → DevOps) | `main.py --goal "<goal>"` |
+| `/agentforge-intake <goal>` | Requirements (PM) | `--preset intake` |
+| `/agentforge-design <goal>` | Requirements + architecture | `--preset design` |
+| `/agentforge-implement <goal>` | FastAPI app (Backend) | `--preset implement` |
+| `/agentforge-test <goal>` | QA tests + pytest | `--preset test` |
+| `/agentforge-ship <goal>` | Docker/CI/runbook (DevOps) | `--preset ship` |
+| `/agentforge-improve <goal>` | Refactor + re-verify | `--preset improve` |
+| `/agentforge-resume <goal>` | Skip completed phases for the same goal | `--resume` |
+| `/agentforge-artifacts` | List generated files | `--list-artifacts` |
+| `/agentforge-dry-run [goal]` | Show config, no API calls | `--dry-run` |
+
+**Claude Code** picks these up automatically (project commands). To use them in **every** project, copy
+them to your global commands dir:
+
+```bash
+cp .claude/commands/agentforge*.md ~/.claude/commands/
+```
+
+**Other AI CLIs** (Cursor, Codex, Aider, Continue, Cline, Windsurf): there's no shared slash-command
+standard, so use the **CLI form** the table maps to — ask the assistant to run it, e.g.:
+
+> "Run `uv run python main.py --preset test --goal '…'` from the repo root."
+
+The mapping is 1:1, so the slash commands double as a copy-paste cheatsheet for any tool.
+
+---
+
 ## Per-assistant notes
 
 ### Claude Code
-- Ships a slash command: type `/agentforge` (defined in `.claude/commands/agentforge.md`) for setup +
-  flags inline, or just ask it to run the `uv run …` command.
+- The command set above is available as `/agentforge…` slash commands (project `.claude/commands/`).
 - Long runs: ask it to run in the background / a separate terminal; local models take minutes per phase.
 
 ### Cursor
