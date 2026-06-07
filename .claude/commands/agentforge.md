@@ -21,7 +21,7 @@ cp .env.example .env
 
 Runtime loading: AgentForge uses **`python-dotenv`** (loads project `.env` on startup). Optionally: `uv run --env-file .env …` or `export UV_ENV_FILE=.env` for uv’s default file.
 
-**Full guide:** [USAGE.md](USAGE.md) · **Architecture:** [agents_plan.md](agents_plan.md)
+**Full guide:** [USAGE.md](../../USAGE.md) · **Architecture:** [agents_plan.md](../../agents_plan.md) · **Local models:** [docs/ollama.md](../../docs/ollama.md)
 
 ---
 

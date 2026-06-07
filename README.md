@@ -109,9 +109,11 @@ Missing packages → run `uv sync` (or `pip install -r requirements.txt`). API e
 
 ## Full instructions
 
-- **[USAGE.md](USAGE.md)** — CLI, TUI, web UI, presets, pip fallback, troubleshooting  
-- **[docs/ollama.md](docs/ollama.md)** — run on local models; Windows-Ollama + WSL setup, model choice  
+- **[USAGE.md](USAGE.md)** — CLI, TUI, web UI, presets, gate flags, pip fallback, troubleshooting  
+- **[docs/ollama.md](docs/ollama.md)** — run on local models; Windows-Ollama + WSL setup, model choice, diagnostics  
 - **[agents_plan.md](agents_plan.md)** — architecture, env var table, deployment phases  
+- **[CHANGELOG.md](CHANGELOG.md)** — user-visible release notes  
+- **[improvement.md](improvement.md)** — design notes & reference gap analysis (what changed and why)  
 - **[docs/github-repository.md](docs/github-repository.md)** — GitHub description, topics, `gh repo create`, public vs private  
 
 Claude Code shortcut: [.claude/commands/agentforge.md](.claude/commands/agentforge.md)
