@@ -173,18 +173,50 @@ AGENTFORGE_OLLAMA_MODEL=qwen2.5-coder:7b
 
 ---
 
-## 6. Troubleshooting
+## 6. One-shot diagnostic (run this first when it fails)
+
+Paste this in WSL — it finds the Windows host, tests both endpoints, and tells you which to use:
+
+```bash
+WINHOST=$(ip route show default | awk '{print $3}')
+echo "Windows host (WSL gateway): $WINHOST"
+echo "--- WSL localhost ---";  curl -s -m 3 http://127.0.0.1:11434/api/tags >/dev/null && echo "reachable" || echo "NOT reachable"
+echo "--- Windows host ---";   curl -s -m 4 "http://$WINHOST:11434/api/tags" | head -c 300 || echo "NOT reachable"
+```
+
+Interpret:
+
+- **Windows host reachable** → Ollama is on Windows. Set in `.env`:
+  ```bash
+  AGENTFORGE_OLLAMA_HOST=http://<that-WINHOST-ip>:11434
+  AGENTFORGE_OLLAMA_TRUST_LAN=1
+  ```
+- **Neither reachable** → Ollama isn't running or isn't bound to `0.0.0.0`. On Windows:
+  `setx OLLAMA_HOST "0.0.0.0:11434"`, quit Ollama from the tray, relaunch; add the firewall rule (§3 B-2).
+- **WSL localhost reachable** → Ollama is inside WSL; defaults work, no host/trust changes needed.
+
+Also confirm the model supports tools — the `/api/tags` JSON for it should list `"capabilities":[…,"tools"]`.
+
+A failed run now prints a clean panel (no traceback) with the endpoint it tried and a hint — it points
+back here.
+
+---
+
+## 7. Troubleshooting
 
 | Symptom | Cause / fix |
 |---------|-------------|
-| `ollama unreachable at http://127.0.0.1:11434` | Topology B: WSL can't see Windows localhost. Use mirrored networking (B-1) or the host IP + `AGENTFORGE_OLLAMA_TRUST_LAN=1` (B-2). |
+| `LLM connection failed` panel / `Ollama unreachable at http://127.0.0.1:11434` | Topology B: WSL can't see Windows localhost. Run the diagnostic above; use mirrored networking (B-1) or host IP + `AGENTFORGE_OLLAMA_TRUST_LAN=1` (B-2). |
+| `ollama: command not found` in WSL | Normal when Ollama runs on **Windows** — there is no Linux CLI in WSL. Run `ollama pull …` in **Windows PowerShell**, not WSL. (Or install Ollama in WSL for topology A.) |
 | `Connection refused` from `curl /api/tags` | Ollama not running, or not bound to `0.0.0.0` on Windows (`setx OLLAMA_HOST 0.0.0.0:11434`, then restart Ollama). |
-| Connects locally but not from WSL | Windows Firewall blocking 11434 — add the inbound rule above. |
-| `AGENTFORGE_OLLAMA_HOST` rejected / "host not allowed" | It's a private/LAN address; set `AGENTFORGE_OLLAMA_TRUST_LAN=1`. |
-| `model "…" not found` | `ollama pull <model>` on the machine running Ollama. |
-| Truncated files / no tool calls | Model too small or lacks tool support — switch to `qwen2.5-coder:7b` / `llama3.1:8b`. |
+| Worked before, broke after reboot | The WSL→Windows gateway IP (e.g. `172.x.x.1`) **changes across reboots** in NAT mode. Re-run the diagnostic and update `AGENTFORGE_OLLAMA_HOST`, or switch to mirrored networking (B-1) so `127.0.0.1` is stable. |
+| Connects locally but not from WSL | Windows Firewall blocking 11434 — add the inbound rule in §3 B-2. |
+| `Ollama config error` panel / `AGENTFORGE_OLLAMA_HOST` rejected | Private/LAN address without opt-in; set `AGENTFORGE_OLLAMA_TRUST_LAN=1`. (Port must be 80/443/11434 or trust-LAN on.) |
+| `model "…" not found` | `ollama pull <model>` on the machine running Ollama (Windows if topology B). |
+| Truncated files / no tool calls | Model too small or lacks tool support — use a model whose `/api/tags` shows `"tools"` (e.g. `qwen2.5:7b-instruct`, `qwen2.5-coder:7b`, `llama3.1:8b`). |
+| `--preset`/full run dies with exit 124 | A wrapper `timeout` killed it — local models are slow (minutes per phase). Run without a timeout; partial artifacts under `workspace/` are kept, so `--resume` continues. |
 | Very slow | Large model without GPU. Use a smaller tag, or run Ollama where the GPU is and point AgentForge at it. |
-| Timeouts on big builds | Expected for large local models; AgentForge retries. Consider per-role smaller models for `pm`/`reviewer`. |
+| Timeouts on big builds | Expected for large local models; AgentForge retries. Use per-role smaller models for `pm`/`reviewer`, a coder model for `backend`. |
 
 See also: [USAGE.md](../USAGE.md) (all interfaces and flags) and the env-var table in
 [agents_plan.md](../agents_plan.md).
