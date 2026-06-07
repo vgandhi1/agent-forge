@@ -218,5 +218,5 @@ back here.
 | Very slow | Large model without GPU. Use a smaller tag, or run Ollama where the GPU is and point AgentForge at it. |
 | Timeouts on big builds | Expected for large local models; AgentForge retries. Use per-role smaller models for `pm`/`reviewer`, a coder model for `backend`. |
 
-See also: [USAGE.md](../USAGE.md) (all interfaces and flags) and the env-var table in
-[agents_plan.md](../agents_plan.md).
+See also: [USAGE.md](USAGE.md) (all interfaces and flags) and the env-var table in
+[agents_plan.md](agents_plan.md).
