@@ -631,6 +631,39 @@ class BaseAgent(ABC):
                 parts.append(block.text)
         return "\n".join(parts)
 
+    async def _await_reviews(
+        self,
+        label: str,
+        revise_fn: Any,
+        *,
+        max_cycles: int = 6,
+        timeout: float = 600.0,
+    ) -> None:
+        """Loop over the Lead's verdicts after submitting an artifact.
+
+        Approve → stop. Reject → call ``revise_fn(notes)`` (which must write the fix and
+        publish a fresh TASK_COMPLETE) and keep waiting for the next verdict. This matches the
+        Lead's multi-cycle review loop; without it a second rejection would never be handled and
+        the Lead would block until timeout. ``max_cycles`` is a safety bound (the Lead caps first).
+        """
+        for _ in range(max_cycles):
+            msg = await self.bus.receive(self.role, timeout=timeout)
+            if msg is None:
+                self.console.log(f"[yellow]{label}[/yellow] no verdict from Lead (timeout); stopping wait")
+                return
+            if msg.type == MessageType.SHUTDOWN:
+                return
+            if msg.type == MessageType.ARTIFACT_APPROVED:
+                self.console.log(f"[green]{label} approved ✓[/green]")
+                return
+            if msg.type == MessageType.ARTIFACT_REJECTED:
+                notes = msg.payload.get("revision_notes", "")
+                self.console.log(f"[yellow]{label} revision requested:[/yellow] {notes[:80]}")
+                await revise_fn(notes)
+                continue
+            # ignore unrelated message types; keep waiting for a verdict
+        self.console.log(f"[yellow]{label}[/yellow] hit max review cycles ({max_cycles})")
+
     async def _log_known_gap_handler(self, tool_input: dict) -> str:
         from core.known_gaps import log_gap
 

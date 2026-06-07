@@ -103,13 +103,10 @@ class DevOpsEngineerAgent(BaseAgent):
             priority=2,
         ))
 
-        approval_msg = await self.bus.receive(self.role, timeout=120.0)
-        if approval_msg and approval_msg.type == MessageType.ARTIFACT_REJECTED:
-            notes = approval_msg.payload.get("revision_notes", "")
-            self.console.log(f"[yellow]DevOps[/yellow] revisions: {notes}")
+        async def _revise_cb(notes: str) -> None:
             await self._revise(notes, msg, task)
-        else:
-            self.console.log("[red]DevOps[/red] deployment configs approved ✓")
+
+        await self._await_reviews("DevOps", _revise_cb)
 
     async def _revise(self, notes: str, original_msg: Message, task: dict) -> None:
         qa_report = await self.artifacts.read("reports/qa_report.md")
