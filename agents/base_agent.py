@@ -361,6 +361,21 @@ _SCOPE_LOCK_NOTE = (
 )
 
 
+class LLMUnavailableError(RuntimeError):
+    """Raised when an LLM provider is unreachable after all retries.
+
+    Carries enough context for the CLI to print a clean, actionable message instead of a
+    raw traceback. ``hint`` is provider-specific guidance.
+    """
+
+    def __init__(self, provider: str, endpoint: str, detail: str, hint: str = "") -> None:
+        self.provider = provider
+        self.endpoint = endpoint
+        self.detail = detail
+        self.hint = hint
+        super().__init__(f"{provider} unreachable at {endpoint}: {detail}")
+
+
 class BaseAgent(ABC):
     def __init__(
         self,
@@ -465,7 +480,18 @@ class BaseAgent(ABC):
                 raise
 
         assert last_err is not None
-        raise last_err
+        raise LLMUnavailableError(
+            "Ollama",
+            origin,
+            str(last_err) or type(last_err).__name__,
+            hint=(
+                "Is Ollama running and reachable at that host? "
+                "If Ollama is on Windows and AgentForge is in WSL2, the default 127.0.0.1 won't "
+                "reach it — set AGENTFORGE_OLLAMA_HOST to the Windows host and "
+                "AGENTFORGE_OLLAMA_TRUST_LAN=1. See docs/ollama.md. "
+                f"Quick check: curl {origin}/api/tags"
+            ),
+        ) from last_err
 
     def _anthropic_initial_messages(
         self, user_message: str, dynamic_context: str = ""
@@ -564,7 +590,15 @@ class BaseAgent(ABC):
                 raise
 
         assert last_err is not None
-        raise last_err
+        raise LLMUnavailableError(
+            "Anthropic",
+            "api.anthropic.com",
+            str(last_err) or type(last_err).__name__,
+            hint=(
+                "Check your network connection and ANTHROPIC_API_KEY, or switch to local models "
+                "with AGENTFORGE_LLM_PROVIDER=ollama (see docs/ollama.md)."
+            ),
+        ) from last_err
 
     async def _build_dynamic_context(self) -> str:
         decisions = await self.memory.recall_all("decision")
