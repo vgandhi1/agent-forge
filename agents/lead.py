@@ -10,7 +10,7 @@ from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
 from core.phases import DEFAULT_PHASES
-from core import deploy
+from core import deploy, handoff
 from .base_agent import BaseAgent
 from .reviewer import ReviewerAgent
 
@@ -99,6 +99,7 @@ class LeadAgent(BaseAgent):
         self.reviewer = ReviewerAgent("reviewer", bus, artifact_store, console)
         self._current_brief: str = ""
         self._plan_gate: bool = False
+        self._last_review_summary: str = ""
         # Deploy gate hooks — overridable in tests. Defaults do real I/O.
         self._approval_fn = self._default_approval
         self._verify_fn = self._default_verify
@@ -115,6 +116,7 @@ class LeadAgent(BaseAgent):
         auto_approve: bool = False,
         deploy_commit: bool = False,
         plan_gate: bool = False,
+        resume: bool = False,
     ) -> None:
         self._plan_gate = plan_gate
         phase_list = phases if phases is not None else DEFAULT_PHASES
@@ -126,7 +128,23 @@ class LeadAgent(BaseAgent):
 
         await self.memory.remember("sprint_goal", goal)
 
+        completed: set[str] = set()
+        if resume:
+            cp = await handoff.load_checkpoint(self.artifacts)
+            if cp.get("goal_fp") == handoff.goal_fingerprint(goal):
+                completed = set(cp.get("completed", []))
+                self._approved_artifacts.update(cp.get("artifacts", {}))
+                if completed:
+                    self.console.log(
+                        f"[cyan]Resuming — skipping completed phases: {', '.join(sorted(completed))}[/cyan]"
+                    )
+            else:
+                self.console.log("[yellow]Resume requested but checkpoint goal differs — starting fresh.[/yellow]")
+
         for agent_role, phase_description in phase_list:
+            if agent_role in completed:
+                self.console.log(f"[dim]Skipping {agent_role} (already complete in checkpoint).[/dim]")
+                continue
             await self._run_phase(agent_role, phase_description, goal)
 
         self.console.print(Panel(
@@ -261,6 +279,17 @@ class LeadAgent(BaseAgent):
 
             self.console.log(f"[yellow]Revision {revision} requested for {agent_role}[/yellow]")
 
+        # Write the per-phase handoff file and update the resumable checkpoint.
+        path = self._approved_artifacts.get(f"{agent_role}_artifact", "")
+        await handoff.record_phase(
+            self.artifacts,
+            goal=goal,
+            role=agent_role,
+            brief=self._current_brief,
+            files=[path] if path else [],
+            review_summary=self._last_review_summary,
+        )
+
     async def _review_artifact(self, agent_role: str, artifact: dict, attempt: int) -> bool:
         """Consult the independent Reviewer and act on its verdict.
 
@@ -289,6 +318,7 @@ class LeadAgent(BaseAgent):
         must_fix = verdict.get("must_fix") or []
         should_fix = verdict.get("should_fix") or []
         review_summary = verdict.get("summary", "")
+        self._last_review_summary = review_summary
 
         if decision == "approve":
             await self.bus.publish(Message(
