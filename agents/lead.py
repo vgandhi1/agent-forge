@@ -98,6 +98,7 @@ class LeadAgent(BaseAgent):
         # Independent reviewer consulted at the approval gate (see _review_artifact).
         self.reviewer = ReviewerAgent("reviewer", bus, artifact_store, console)
         self._current_brief: str = ""
+        self._plan_gate: bool = False
         # Deploy gate hooks — overridable in tests. Defaults do real I/O.
         self._approval_fn = self._default_approval
         self._verify_fn = self._default_verify
@@ -113,7 +114,9 @@ class LeadAgent(BaseAgent):
         deploy_gate: bool = False,
         auto_approve: bool = False,
         deploy_commit: bool = False,
+        plan_gate: bool = False,
     ) -> None:
+        self._plan_gate = plan_gate
         phase_list = phases if phases is not None else DEFAULT_PHASES
         self.console.print(Panel(
             f"[bold]Sprint Goal:[/bold]\n{goal.strip()}",
@@ -176,6 +179,8 @@ class LeadAgent(BaseAgent):
         task_payload["approved_artifacts"] = dict(self._approved_artifacts)
         task_payload["sprint_goal"] = goal
         self._current_brief = task_payload.get("task_description", phase_description)
+        plan_gate_active = self._plan_gate and agent_role == "backend"
+        task_payload["plan_gate"] = plan_gate_active
 
         self.console.log(f"[cyan]Lead → {agent_role}:[/cyan] {task_payload.get('deliverable', '')}")
 
@@ -186,6 +191,9 @@ class LeadAgent(BaseAgent):
             payload=task_payload,
             priority=1,
         ))
+
+        if plan_gate_active:
+            await self._handle_plan_gate(agent_role)
 
         max_revisions = 3
         revision = 0
@@ -330,6 +338,45 @@ class LeadAgent(BaseAgent):
         ))
         self.console.log(f"[yellow]Reviewer rejected {agent_role} artifact ({len(must_fix)} must-fix)[/yellow]")
         return False
+
+    # ------------------------------------------------------------------ plan gate
+
+    async def _handle_plan_gate(self, agent_role: str) -> None:
+        """Wait for the agent's build plan, approve or redirect it before any code is written.
+
+        Fail-open: if no plan arrives, the build proceeds (no deadlock).
+        """
+        msg = await self.bus.receive("lead", timeout=300.0)
+        if msg is None or msg.type != MessageType.CONSULT_REQUEST:
+            self.console.log(f"[yellow]No build plan from {agent_role}; proceeding without plan gate.[/yellow]")
+            return
+
+        plan = msg.payload.get("plan", "")
+        self.console.log(f"[cyan]Reviewing {agent_role} build plan…[/cyan]")
+        context = await self._build_dynamic_context()
+        response = await self._call_llm(
+            user_message=(
+                f"The {agent_role} proposed this build plan for the brief:\n{self._current_brief}\n\n"
+                f"Plan:\n{plan}\n\n"
+                f"If it correctly and completely addresses the brief, reply exactly 'APPROVE'. "
+                f"Otherwise reply 'REDIRECT: <specific changes>'."
+            ),
+            dynamic_context=context,
+        )
+        verdict = self._extract_text(response).strip()
+        approved = verdict.upper().startswith("APPROVE")
+        notes = "" if approved else verdict.split(":", 1)[-1].strip()
+        await self.memory.remember(f"build_plan_{agent_role}", plan[:1000], "decision")
+        self.console.log(
+            f"[green]Plan approved[/green]" if approved else f"[yellow]Plan redirected:[/yellow] {notes[:80]}"
+        )
+        await self.bus.publish(Message(
+            type=MessageType.CONSULT_RESPONSE,
+            sender="lead",
+            recipient=agent_role,
+            payload={"approved": approved, "notes": notes},
+            priority=1,
+        ))
 
     # ------------------------------------------------------------------ deploy gate
 

@@ -77,6 +77,10 @@ class BackendDeveloperAgent(BaseAgent):
 
         sprint_goal = task.get("sprint_goal", "")
 
+        plan_notes = ""
+        if task.get("plan_gate"):
+            plan_notes = await self._propose_plan(arch_content, req_content, task, context)
+
         written_files: list[str] = []
 
         async def write_file_handler(tool_input: dict) -> str:
@@ -97,6 +101,7 @@ class BackendDeveloperAgent(BaseAgent):
 
         await self.run_tool_loop(
             user_message=(
+                f"{plan_notes}"
                 f"Implement the complete DailyEase FastAPI application.\n\n"
                 f"Sprint goal (context): {sprint_goal}\n\n"
                 f"Architecture Document:\n```markdown\n{condense_markdown(arch_content, 7000, _PREFER)}\n```\n\n"
@@ -139,6 +144,40 @@ class BackendDeveloperAgent(BaseAgent):
             await self._revise(notes, msg, written_files)
         else:
             self.console.log("[green]Backend[/green] implementation approved ✓")
+
+    async def _propose_plan(self, arch_content: str, req_content: str, task: dict, context: str) -> str:
+        """Show a build plan to the Lead and wait for confirmation before writing code.
+
+        Returns redirect notes to fold into the build (empty string if approved or no response).
+        """
+        response = await self._call_llm(
+            user_message=(
+                "Before writing any code, produce a concise build plan: the file groups you will "
+                "create, key technical decisions, and anything you are uncertain about. No code yet.\n\n"
+                f"Task: {task['task_description']}\n\n"
+                f"Architecture:\n```markdown\n{condense_markdown(arch_content, 4000, _PREFER)}\n```\n\n"
+                f"Requirements:\n```markdown\n{condense_markdown(req_content, 2000, _PREFER)}\n```"
+            ),
+            dynamic_context=context,
+        )
+        plan = self._extract_text(response)
+        self.console.log("[green]Backend[/green] submitted build plan for confirmation")
+        await self.bus.publish(Message(
+            type=MessageType.CONSULT_REQUEST,
+            sender=self.role,
+            recipient="lead",
+            payload={"kind": "build_plan", "plan": plan},
+            priority=2,
+        ))
+        resp = await self.bus.receive(self.role, timeout=300.0)
+        if resp and resp.type == MessageType.CONSULT_RESPONSE:
+            if resp.payload.get("approved"):
+                self.console.log("[green]Backend[/green] plan approved — building")
+                return ""
+            notes = resp.payload.get("notes", "")
+            self.console.log(f"[yellow]Backend[/yellow] plan redirected: {notes[:80]}")
+            return f"Architect redirected your plan — incorporate this before building:\n{notes}\n\n"
+        return ""
 
     async def _revise(self, notes: str, original_msg: Message, prior_files: list[str]) -> None:
         context = await self._build_dynamic_context()
