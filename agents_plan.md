@@ -270,7 +270,10 @@ python main.py --dry-run
 | `AGENTFORGE_API_RETRIES` | `4` | Retries for rate limits, timeouts, connection errors, HTTP 5xx on Anthropic |
 | `AGENTFORGE_DEPLOY_GATE` | unset | Set to `1` to require human sign-off before the deploy step (CLI: `--deploy-gate`; `--auto-approve` for unattended) |
 | `AGENTFORGE_DEPLOY_COMMIT` | unset | Set to `1` to commit the generated `workspace/dailyease` app to its own git repo on deploy (CLI: `--deploy-commit`) |
+| `AGENTFORGE_PLAN_GATE` | unset | Set to `1` so the backend shows a build plan for Lead confirmation before writing code (CLI: `--plan-gate`) |
 | `UV_ENV_FILE` | (unset) | Optional: path passed to `uv run` so variables load from that file |
+
+CLI-only: `--resume` skips phases already completed for the same goal (reads `handoff/checkpoint.json`).
 
 ### Upgrade to Opus 4.7
 
