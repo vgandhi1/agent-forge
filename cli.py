@@ -19,7 +19,12 @@ from rich.text import Text
 from core.paths import ROOT, WORKSPACE
 from core.phases import PHASE_PRESETS, VALID_ROLES
 from core.ollama_url import validate_ollama_base_url
-from agents.base_agent import anthropic_model_for_role, llm_provider, ollama_model_for_role
+from agents.base_agent import (
+    LLMUnavailableError,
+    anthropic_model_for_role,
+    llm_provider,
+    ollama_model_for_role,
+)
 
 load_dotenv()
 
@@ -388,6 +393,22 @@ def main() -> None:
         )
         sys.exit(1)
 
+    if llm_provider() == "ollama":
+        from agents.base_agent import ollama_chat_origin
+
+        try:
+            ollama_chat_origin()  # validates AGENTFORGE_OLLAMA_HOST up front
+        except ValueError as e:
+            console.print(Panel(
+                f"[bold]Invalid AGENTFORGE_OLLAMA_HOST.[/bold]\n{e}\n\n"
+                "Use a loopback URL (e.g. http://127.0.0.1:11434), or set "
+                "AGENTFORGE_OLLAMA_TRUST_LAN=1 for a LAN/Docker/Windows-host address. "
+                "See docs/ollama.md.",
+                title="[red]Ollama config error[/red]",
+                border_style="red",
+            ))
+            sys.exit(1)
+
     def _env_flag(name: str) -> bool:
         return os.getenv(name, "").strip().lower() in ("1", "true", "yes")
 
@@ -395,16 +416,27 @@ def main() -> None:
     deploy_commit = args.deploy_commit or _env_flag("AGENTFORGE_DEPLOY_COMMIT")
     plan_gate = args.plan_gate or _env_flag("AGENTFORGE_PLAN_GATE")
 
-    asyncio.run(_run_cycle(
-        goal_text,
-        phases,
-        skip_summary=args.skip_summary,
-        deploy_gate=deploy_gate,
-        auto_approve=args.auto_approve,
-        deploy_commit=deploy_commit,
-        plan_gate=plan_gate,
-        resume=args.resume,
-    ))
+    try:
+        asyncio.run(_run_cycle(
+            goal_text,
+            phases,
+            skip_summary=args.skip_summary,
+            deploy_gate=deploy_gate,
+            auto_approve=args.auto_approve,
+            deploy_commit=deploy_commit,
+            plan_gate=plan_gate,
+            resume=args.resume,
+        ))
+    except LLMUnavailableError as e:
+        console.print(Panel(
+            f"[bold]{e.provider} is unreachable.[/bold]\n"
+            f"Endpoint: {e.endpoint}\n"
+            f"Detail: {e.detail}\n\n"
+            f"{e.hint}",
+            title="[red]LLM connection failed[/red]",
+            border_style="red",
+        ))
+        sys.exit(1)
 
 
 if __name__ == "__main__":
