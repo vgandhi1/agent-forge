@@ -95,13 +95,10 @@ class ArchitectAgent(BaseAgent):
             priority=2,
         ))
 
-        approval_msg = await self.bus.receive(self.role, timeout=120.0)
-        if approval_msg and approval_msg.type == MessageType.ARTIFACT_REJECTED:
-            notes = approval_msg.payload.get("revision_notes", "")
-            self.console.log(f"[yellow]Architect[/yellow] revisions requested: {notes}")
+        async def _revise_cb(notes: str) -> None:
             await self._revise(primary_path, notes, msg)
-        else:
-            self.console.log("[magenta]Architect[/magenta] architecture approved ✓")
+
+        await self._await_reviews("Architect", _revise_cb)
 
     async def _revise(self, original_path: str, notes: str, original_msg: Message) -> None:
         original_content = await self.artifacts.read(original_path)

@@ -149,13 +149,10 @@ class QAEngineerAgent(BaseAgent):
             priority=2,
         ))
 
-        approval_msg = await self.bus.receive(self.role, timeout=120.0)
-        if approval_msg and approval_msg.type == MessageType.ARTIFACT_REJECTED:
-            notes = approval_msg.payload.get("revision_notes", "")
-            self.console.log(f"[yellow]QA[/yellow] revisions: {notes}")
+        async def _revise_cb(notes: str) -> None:
             await self._revise(notes, msg, primary_path)
-        else:
-            self.console.log("[yellow]QA[/yellow] test suite approved ✓")
+
+        await self._await_reviews("QA", _revise_cb)
 
     async def _generate_tests(self, user_message: str, context: str) -> list[str]:
         written_files: list[str] = []

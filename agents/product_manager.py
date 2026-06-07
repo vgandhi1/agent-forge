@@ -89,14 +89,11 @@ class ProductManagerAgent(BaseAgent):
             priority=2,
         ))
 
-        # Wait for approval/rejection
-        approval_msg = await self.bus.receive(self.role, timeout=120.0)
-        if approval_msg and approval_msg.type == MessageType.ARTIFACT_APPROVED:
-            self.console.log("[blue]PM[/blue] requirements approved ✓")
-        elif approval_msg and approval_msg.type == MessageType.ARTIFACT_REJECTED:
-            notes = approval_msg.payload.get("revision_notes", "")
-            self.console.log(f"[yellow]PM[/yellow] revisions requested: {notes}")
+        # Wait for the Lead's verdict(s); handle every revision cycle, not just the first.
+        async def _revise(notes: str) -> None:
             await self._revise_artifact(primary_path, notes, msg)
+
+        await self._await_reviews("PM", _revise)
 
     async def _revise_artifact(self, original_path: str, revision_notes: str, original_msg: Message) -> None:
         original_content = await self.artifacts.read(original_path)

@@ -137,13 +137,10 @@ class BackendDeveloperAgent(BaseAgent):
             priority=2,
         ))
 
-        approval_msg = await self.bus.receive(self.role, timeout=120.0)
-        if approval_msg and approval_msg.type == MessageType.ARTIFACT_REJECTED:
-            notes = approval_msg.payload.get("revision_notes", "")
-            self.console.log(f"[yellow]Backend[/yellow] revisions: {notes}")
+        async def _revise_cb(notes: str) -> None:
             await self._revise(notes, msg, written_files)
-        else:
-            self.console.log("[green]Backend[/green] implementation approved ✓")
+
+        await self._await_reviews("Backend", _revise_cb)
 
     async def _propose_plan(self, arch_content: str, req_content: str, task: dict, context: str) -> str:
         """Show a build plan to the Lead and wait for confirmation before writing code.
