@@ -134,6 +134,8 @@ async def _run_cycle(
     deploy_gate: bool = False,
     auto_approve: bool = False,
     deploy_commit: bool = False,
+    plan_gate: bool = False,
+    resume: bool = False,
 ) -> None:
     console = Console()
 
@@ -175,6 +177,8 @@ async def _run_cycle(
             deploy_gate=deploy_gate,
             auto_approve=auto_approve,
             deploy_commit=deploy_commit,
+            plan_gate=plan_gate,
+            resume=resume,
         )
     finally:
         for role in ["pm", "architect", "backend", "qa", "devops"]:
@@ -275,6 +279,17 @@ def main() -> None:
         "(env: AGENTFORGE_DEPLOY_COMMIT=1)",
     )
     parser.add_argument(
+        "--plan-gate",
+        action="store_true",
+        help="Backend shows a build plan for Lead confirmation before writing code "
+        "(env: AGENTFORGE_PLAN_GATE=1)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip phases already completed for the same goal (reads handoff/checkpoint.json)",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging to stderr (agentforge loggers)",
@@ -358,7 +373,9 @@ def main() -> None:
             f"[bold]Preset:[/bold] {args.preset}\n"
             f"[bold]Phases:[/bold] {phase_desc}\n"
             f"[bold]Deploy gate:[/bold] {gate_desc}\n"
-            f"[bold]Deploy commit:[/bold] {'on' if commit_on else 'off'}\n\n"
+            f"[bold]Deploy commit:[/bold] {'on' if commit_on else 'off'}\n"
+            f"[bold]Plan gate:[/bold] {'on (backend)' if (args.plan_gate or os.getenv('AGENTFORGE_PLAN_GATE', '').strip().lower() in ('1', 'true', 'yes')) else 'off'}\n"
+            f"[bold]Resume:[/bold] {'on' if args.resume else 'off'}\n\n"
             f"[bold]Sprint Goal:[/bold]\n{goal_text.strip()}",
             title="[cyan]AgentForge Dry Run[/cyan]",
         ))
@@ -376,6 +393,7 @@ def main() -> None:
 
     deploy_gate = args.deploy_gate or _env_flag("AGENTFORGE_DEPLOY_GATE")
     deploy_commit = args.deploy_commit or _env_flag("AGENTFORGE_DEPLOY_COMMIT")
+    plan_gate = args.plan_gate or _env_flag("AGENTFORGE_PLAN_GATE")
 
     asyncio.run(_run_cycle(
         goal_text,
@@ -384,6 +402,8 @@ def main() -> None:
         deploy_gate=deploy_gate,
         auto_approve=args.auto_approve,
         deploy_commit=deploy_commit,
+        plan_gate=plan_gate,
+        resume=args.resume,
     ))
 
 

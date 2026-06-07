@@ -1,6 +1,7 @@
 from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
+from core.context import condense_markdown
 from .base_agent import BaseAgent
 
 _TOOLS = [
@@ -61,7 +62,7 @@ class ArchitectAgent(BaseAgent):
             user_message=(
                 f"Design the complete system architecture for DailyEase.\n\n"
                 f"Sprint goal (context): {sprint_goal}\n\n"
-                f"Requirements Document:\n```markdown\n{requirements_content}\n```\n\n"
+                f"Requirements Document:\n```markdown\n{condense_markdown(requirements_content, 8000, ['task', 'habit', 'finance', 'wellness', 'api', 'requirement', 'user story', 'nfr'])}\n```\n\n"
                 f"Task: {task['task_description']}\n\n"
                 f"Save to docs/architecture.md using write_file. Include ALL required sections: "
                 f"system overview, tech stack, database schema, app structure, API design, "

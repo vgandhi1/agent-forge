@@ -10,7 +10,7 @@ from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
 from core.phases import DEFAULT_PHASES
-from core import deploy
+from core import deploy, handoff
 from .base_agent import BaseAgent
 from .reviewer import ReviewerAgent
 
@@ -98,6 +98,8 @@ class LeadAgent(BaseAgent):
         # Independent reviewer consulted at the approval gate (see _review_artifact).
         self.reviewer = ReviewerAgent("reviewer", bus, artifact_store, console)
         self._current_brief: str = ""
+        self._plan_gate: bool = False
+        self._last_review_summary: str = ""
         # Deploy gate hooks — overridable in tests. Defaults do real I/O.
         self._approval_fn = self._default_approval
         self._verify_fn = self._default_verify
@@ -113,7 +115,10 @@ class LeadAgent(BaseAgent):
         deploy_gate: bool = False,
         auto_approve: bool = False,
         deploy_commit: bool = False,
+        plan_gate: bool = False,
+        resume: bool = False,
     ) -> None:
+        self._plan_gate = plan_gate
         phase_list = phases if phases is not None else DEFAULT_PHASES
         self.console.print(Panel(
             f"[bold]Sprint Goal:[/bold]\n{goal.strip()}",
@@ -123,7 +128,23 @@ class LeadAgent(BaseAgent):
 
         await self.memory.remember("sprint_goal", goal)
 
+        completed: set[str] = set()
+        if resume:
+            cp = await handoff.load_checkpoint(self.artifacts)
+            if cp.get("goal_fp") == handoff.goal_fingerprint(goal):
+                completed = set(cp.get("completed", []))
+                self._approved_artifacts.update(cp.get("artifacts", {}))
+                if completed:
+                    self.console.log(
+                        f"[cyan]Resuming — skipping completed phases: {', '.join(sorted(completed))}[/cyan]"
+                    )
+            else:
+                self.console.log("[yellow]Resume requested but checkpoint goal differs — starting fresh.[/yellow]")
+
         for agent_role, phase_description in phase_list:
+            if agent_role in completed:
+                self.console.log(f"[dim]Skipping {agent_role} (already complete in checkpoint).[/dim]")
+                continue
             await self._run_phase(agent_role, phase_description, goal)
 
         self.console.print(Panel(
@@ -176,6 +197,8 @@ class LeadAgent(BaseAgent):
         task_payload["approved_artifacts"] = dict(self._approved_artifacts)
         task_payload["sprint_goal"] = goal
         self._current_brief = task_payload.get("task_description", phase_description)
+        plan_gate_active = self._plan_gate and agent_role == "backend"
+        task_payload["plan_gate"] = plan_gate_active
 
         self.console.log(f"[cyan]Lead → {agent_role}:[/cyan] {task_payload.get('deliverable', '')}")
 
@@ -187,6 +210,9 @@ class LeadAgent(BaseAgent):
             priority=1,
         ))
 
+        if plan_gate_active:
+            await self._handle_plan_gate(agent_role)
+
         max_revisions = 3
         revision = 0
         while revision < max_revisions:
@@ -197,6 +223,11 @@ class LeadAgent(BaseAgent):
 
             if result_msg.type == MessageType.SHUTDOWN:
                 break
+
+            if result_msg.type == MessageType.ESCALATION:
+                q = result_msg.payload.get("question", "")
+                self.console.log(f"[magenta]Escalation from {agent_role}:[/magenta] {q[:80]}")
+                continue  # already recorded by the agent; will surface at the deploy gate
 
             if result_msg.type != MessageType.TASK_COMPLETE:
                 self.console.log(f"[yellow]Unexpected message type: {result_msg.type}[/yellow]")
@@ -248,6 +279,17 @@ class LeadAgent(BaseAgent):
 
             self.console.log(f"[yellow]Revision {revision} requested for {agent_role}[/yellow]")
 
+        # Write the per-phase handoff file and update the resumable checkpoint.
+        path = self._approved_artifacts.get(f"{agent_role}_artifact", "")
+        await handoff.record_phase(
+            self.artifacts,
+            goal=goal,
+            role=agent_role,
+            brief=self._current_brief,
+            files=[path] if path else [],
+            review_summary=self._last_review_summary,
+        )
+
     async def _review_artifact(self, agent_role: str, artifact: dict, attempt: int) -> bool:
         """Consult the independent Reviewer and act on its verdict.
 
@@ -276,6 +318,7 @@ class LeadAgent(BaseAgent):
         must_fix = verdict.get("must_fix") or []
         should_fix = verdict.get("should_fix") or []
         review_summary = verdict.get("summary", "")
+        self._last_review_summary = review_summary
 
         if decision == "approve":
             await self.bus.publish(Message(
@@ -325,6 +368,45 @@ class LeadAgent(BaseAgent):
         ))
         self.console.log(f"[yellow]Reviewer rejected {agent_role} artifact ({len(must_fix)} must-fix)[/yellow]")
         return False
+
+    # ------------------------------------------------------------------ plan gate
+
+    async def _handle_plan_gate(self, agent_role: str) -> None:
+        """Wait for the agent's build plan, approve or redirect it before any code is written.
+
+        Fail-open: if no plan arrives, the build proceeds (no deadlock).
+        """
+        msg = await self.bus.receive("lead", timeout=300.0)
+        if msg is None or msg.type != MessageType.CONSULT_REQUEST:
+            self.console.log(f"[yellow]No build plan from {agent_role}; proceeding without plan gate.[/yellow]")
+            return
+
+        plan = msg.payload.get("plan", "")
+        self.console.log(f"[cyan]Reviewing {agent_role} build plan…[/cyan]")
+        context = await self._build_dynamic_context()
+        response = await self._call_llm(
+            user_message=(
+                f"The {agent_role} proposed this build plan for the brief:\n{self._current_brief}\n\n"
+                f"Plan:\n{plan}\n\n"
+                f"If it correctly and completely addresses the brief, reply exactly 'APPROVE'. "
+                f"Otherwise reply 'REDIRECT: <specific changes>'."
+            ),
+            dynamic_context=context,
+        )
+        verdict = self._extract_text(response).strip()
+        approved = verdict.upper().startswith("APPROVE")
+        notes = "" if approved else verdict.split(":", 1)[-1].strip()
+        await self.memory.remember(f"build_plan_{agent_role}", plan[:1000], "decision")
+        self.console.log(
+            f"[green]Plan approved[/green]" if approved else f"[yellow]Plan redirected:[/yellow] {notes[:80]}"
+        )
+        await self.bus.publish(Message(
+            type=MessageType.CONSULT_RESPONSE,
+            sender="lead",
+            recipient=agent_role,
+            payload={"approved": approved, "notes": notes},
+            priority=1,
+        ))
 
     # ------------------------------------------------------------------ deploy gate
 

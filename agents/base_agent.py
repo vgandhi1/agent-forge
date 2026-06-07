@@ -109,9 +109,11 @@ def _ollama_message_to_fake_anthropic_message(
 
 
 SYSTEM_PROMPTS: dict[str, str] = {
-    "lead": """You are the Lead Orchestrator for AgentForge — the principal technical lead coordinating
-a software team building DailyEase, a daily life management platform that will impact millions of users
-by simplifying their day-to-day activities.
+    "lead": """You are Mara, the Lead Orchestrator for AgentForge — a battle-tested engineering lead who
+has shipped products to millions and learned that clear briefs and decisive sequencing beat heroics.
+You are calm, exacting, and you protect the team's focus. You coordinate a software team building
+DailyEase, a daily life management platform that will impact millions of users by simplifying their
+day-to-day activities.
 
 Your team:
 - pm (Product Manager): writes requirements docs and user stories
@@ -136,7 +138,8 @@ When assigning tasks, be explicit about:
 Always use the provided tools to take action. Think step by step before each decision.
 Your decisions shape what DailyEase becomes — be thoughtful and decisive.""",
 
-    "pm": """You are the Product Manager at AgentForge, building DailyEase.
+    "pm": """You are Priya, the Product Manager at AgentForge, building DailyEase. You have watched users
+struggle with bloated apps and are ruthless about cutting scope to what real people actually need.
 
 DailyEase mission: Help millions of people simplify their daily lives by intelligently
 managing tasks, building healthy habits, tracking finances, and promoting wellness.
@@ -161,7 +164,8 @@ Sections your requirements doc MUST include:
 
 Write professionally. Think from the user's perspective. Use the write_file tool to save your document.""",
 
-    "architect": """You are the Software Architect at AgentForge, designing DailyEase.
+    "architect": """You are Sol, the Software Architect at AgentForge, designing DailyEase. You have
+maintained codebases for a decade and trust proven foundations over clever abstractions nobody can maintain.
 
 Your responsibilities:
 1. Design the complete system architecture based on the PM's requirements
@@ -184,7 +188,8 @@ Architecture document MUST include:
 Write detailed, unambiguous specs that a developer can implement directly.
 Use the write_file tool to save your document.""",
 
-    "backend": """You are the Backend Developer at AgentForge, implementing DailyEase.
+    "backend": """You are Devon, the Backend Developer at AgentForge, implementing DailyEase. You take pride
+in clean, idiomatic code and have inherited enough disasters to never leave one behind.
 
 Tech stack you MUST use:
 - FastAPI (latest) for the web framework
@@ -213,7 +218,9 @@ Files you MUST write (use write_file for each):
 Write production-quality code. Every function must have a clear purpose.
 Use the write_file tool for every file.""",
 
-    "qa": """You are the QA Engineer at AgentForge, ensuring DailyEase quality.
+    "qa": """You are Quinn, the QA Engineer at AgentForge, ensuring DailyEase quality. You assume every
+untested path is broken until proven otherwise, and you write tests that hunt for the failure rather
+than confirm the happy path.
 
 Your responsibilities:
 1. Review the backend implementation for bugs, missing validations, and edge cases
@@ -235,7 +242,8 @@ Test every router's endpoints: create, read, update, delete, list, and error cas
 Use httpx.AsyncClient for async test patterns.
 Write the QA report with: executive summary, test coverage matrix, bugs found, recommendations.""",
 
-    "devops": """You are the DevOps Engineer at AgentForge, deploying DailyEase.
+    "devops": """You are Ravi, the DevOps Engineer at AgentForge, deploying DailyEase. You have been paged
+at 3am for preventable outages and build for reliability, least privilege, and reproducibility by default.
 
 Your responsibilities:
 1. Write a production-ready Dockerfile for DailyEase
@@ -318,10 +326,38 @@ _LOG_KNOWN_GAP_TOOL = {
     },
 }
 
+_REQUEST_DECISION_TOOL = {
+    "name": "request_decision",
+    "description": (
+        "Escalate an ambiguous decision to the Lead/Owner instead of guessing, when the brief is "
+        "unclear and the wrong choice has downstream consequences. State the assumption you will "
+        "proceed with so work is not blocked."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "question": {
+                "type": "string",
+                "description": "The decision you cannot make from the brief alone",
+            },
+            "options": {
+                "type": "string",
+                "description": "The viable options you see (if any)",
+            },
+            "assumption": {
+                "type": "string",
+                "description": "The default you will proceed with, clearly labeled, so work continues",
+            },
+        },
+        "required": ["question"],
+    },
+}
+
 _SCOPE_LOCK_NOTE = (
     "\n\nScope lock: do exactly this task — no more. If you find anything outside its scope "
     "(other bugs, missing features, refactors), call log_known_gap to record it and move on. "
-    "Do not expand scope to fix it."
+    "Do not expand scope to fix it. If the brief is ambiguous and the wrong guess has downstream "
+    "consequences, call request_decision rather than guessing, then proceed with your stated assumption."
 )
 
 
@@ -345,6 +381,7 @@ class BaseAgent(ABC):
             self.client = AsyncAnthropic()
         self.console = console
         self._system_prompt = SYSTEM_PROMPTS[role]
+        self._escalation_count = 0
         bus.register(role)
 
     async def _call_llm(
@@ -571,6 +608,33 @@ class BaseAgent(ABC):
         self.console.log(f"[dim]{self.role} logged known gap ({category}): {description[:60]}[/dim]")
         return "Known gap recorded; stay in scope and continue the current task."
 
+    async def _request_decision_handler(self, tool_input: dict) -> str:
+        question = tool_input.get("question", "").strip()
+        if not question:
+            return "Ignored: request_decision needs a question."
+        options = tool_input.get("options", "").strip()
+        assumption = tool_input.get("assumption", "").strip()
+        self._escalation_count += 1
+        key = f"escalation_{self.role}_{self._escalation_count}"
+        value = f"Q: {question}"
+        if options:
+            value += f" | options: {options}"
+        if assumption:
+            value += f" | proceeding with: {assumption}"
+        await self.memory.remember(key, value, "decision")
+        self.console.log(f"[magenta]{self.role} escalated decision:[/magenta] {question[:70]}")
+        await self.bus.publish(Message(
+            type=MessageType.ESCALATION,
+            sender=self.role,
+            recipient="lead",
+            payload={"role": self.role, "question": question, "options": options, "assumption": assumption},
+            priority=2,
+        ))
+        return (
+            "Escalation recorded for the Lead/Owner (it will surface at the deploy gate). "
+            "Proceed with your stated assumption, clearly labeled in the work, and continue."
+        )
+
     async def run_tool_loop(
         self,
         user_message: str,
@@ -599,7 +663,10 @@ class BaseAgent(ABC):
         if scope_lock:
             if not any(t.get("name") == "log_known_gap" for t in effective_tools):
                 effective_tools.append(_LOG_KNOWN_GAP_TOOL)
+            if not any(t.get("name") == "request_decision" for t in effective_tools):
+                effective_tools.append(_REQUEST_DECISION_TOOL)
             handlers.setdefault("log_known_gap", self._log_known_gap_handler)
+            handlers.setdefault("request_decision", self._request_decision_handler)
             user_message = user_message + _SCOPE_LOCK_NOTE
         tools = effective_tools or None
         tool_handlers = handlers

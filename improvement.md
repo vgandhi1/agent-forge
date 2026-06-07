@@ -111,36 +111,52 @@ at the approval gate. Tests in `tests/test_reviewer.py`.
 The Reviewer's verdict gained a `drift` field — anything added beyond the brief is routed to the
 Known-Gaps log. The Lead's deploy summary lists the deferred gaps. Tests in `tests/test_scope_lock.py`.
 
-### 6. Crude context truncation vs. selective read
-**Where:** `backend_developer.py` (`arch_content[:4000]`, `req_content[:2000]`), `lead.py` (`content_preview[:3000]`).
-**Problem:** Hard byte-slicing drops information unpredictably.
-**Fix:** Selective extraction (relevant sections / summaries) instead of fixed-length slices.
+### 6. Crude context truncation vs. selective read **[done]**
+**Where:** `core/context.py` (new), `backend_developer.py`, `architect.py`, `qa_engineer.py`, `devops_engineer.py`.
+**Problem:** Hard byte-slicing (`arch_content[:4000]`, …) silently drops the entire tail of a doc.
+**Shipped:** `core.context.condense_markdown` keeps whole Markdown sections, prioritizing those relevant
+to the task (keyword-scored), fills remaining budget in document order, and labels what it dropped.
+Wired into the backend/architect/qa/devops reads. (Lead's review preview gap was already removed in #3/#4.)
+Tests in `tests/test_context.py`.
 
-### 7. Personas are shallow
+### 7. Personas are shallow **[done]**
 **Where:** `base_agent.py` — `SYSTEM_PROMPTS`.
-**Problem:** Prompts are job descriptions, not characters. Reference argues persona > label ("vocabulary routing").
-**Fix:** Add character framing per system prompt. Near-zero runtime cost (system blocks are cached).
+**Problem:** Prompts were job descriptions, not characters.
+**Shipped:** Each role prompt now opens with a named persona + brief backstory and values (Mara/Priya/
+Sol/Devon/Quinn/Ravi; Reviewer already had one). Responsibilities unchanged; system prompts are cached
+so the framing is near-zero cost.
 
-### 8. No resumable, human-readable handoff artifacts
-**Where:** Handoff is in-memory bus payloads + SQLite blob log.
-**Problem:** No per-step brief / review / build-log on disk; no cross-session resume.
-**Fix:** Emit per-phase markdown handoff files under `workspace/` + a checkpoint for multi-sprint resume
-(also Phase 2 in `agents_plan.md`).
+### 8. No resumable, human-readable handoff artifacts **[done]**
+**Where:** `core/handoff.py` (new), `agents/lead.py`, `cli.py`.
+**Problem:** Handoff was in-memory only — no per-step record, no cross-session resume.
+**Shipped:** Each completed phase writes `handoff/<role>.md` (brief, files, review summary) and updates
+`handoff/checkpoint.json` (goal fingerprint + completed phases + artifact refs; resets on goal change).
+`--resume` skips phases already done for the same goal and restores their artifact refs. Tests in
+`tests/test_handoff.py`.
 
-### 9. No "show plan before build" gate
-**Where:** Worker agents jump from TASK_ASSIGN straight to producing artifacts.
-**Fix:** Optional plan-confirm round between assignment and execution for non-trivial tasks.
+### 9. No "show plan before build" gate **[done]**
+**Where:** `agents/lead.py` (`_handle_plan_gate`), `agents/backend_developer.py` (`_propose_plan`), `cli.py`.
+**Problem:** The backend jumped from TASK_ASSIGN straight to writing 20+ files.
+**Shipped:** With `--plan-gate` / `AGENTFORGE_PLAN_GATE` (default off), the backend proposes a concise
+build plan (CONSULT_REQUEST), the Lead approves or redirects (CONSULT_RESPONSE), and the backend folds
+redirect notes in before writing code. Fail-open to avoid deadlock. Tests in `tests/test_plan_gate.py`.
 
-### 10. No escalation channel
-**Where:** `lead.py` decides everything; only signal back is reject notes.
-**Fix:** Escalation message type so agents surface ambiguity instead of guessing.
+### 10. No escalation channel **[done]**
+**Where:** `agents/base_agent.py` (`request_decision` tool), `agents/lead.py`, `core/message_types.py`.
+**Problem:** Agents could only guess; the Lead decided everything.
+**Shipped:** `run_tool_loop` auto-injects a `request_decision` tool (alongside scope lock). A worker
+escalates an ambiguous decision instead of guessing: it records the question + its stated assumption,
+publishes a `MessageType.ESCALATION`, and proceeds with the labeled assumption. Escalations surface in
+the deploy summary. Tests in `tests/test_escalation.py`.
 
 ### Recommended order
 1. ~~**#1 multi-turn tool loop** — foundational; complete artifacts.~~ **[done]**
 2. ~~**#3 + #4 real review** — meaningful only after #1.~~ **[done]**
 3. ~~**#2 deploy / human gate** — accountability before shipping.~~ **[done]**
 4. ~~**#5 scope lock** — drift control.~~ **[done]**
-5. **#6–#10** — polish and resilience. ← next
+5. ~~**#6–#10** — polish and resilience.~~ **[done]**
+
+**All 10 reference gaps shipped.**
 
 ### Not adopting from Three Man Team
 - **Exactly three agents** — AgentForge's six-role org is intentional; the reference's "resist a fourth"
