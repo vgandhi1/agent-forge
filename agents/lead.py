@@ -10,6 +10,8 @@ from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
 from core.phases import DEFAULT_PHASES
+from core.paths import METADATA_ROOT
+from core.profile import load_profile, DEFAULT_PROFILE
 from core import deploy, handoff
 from .base_agent import BaseAgent
 from .reviewer import ReviewerAgent
@@ -100,6 +102,8 @@ class LeadAgent(BaseAgent):
         self._current_brief: str = ""
         self._plan_gate: bool = False
         self._last_review_summary: str = ""
+        # PR-workflow branch for --deploy-commit (set by run_development_cycle); None = current branch.
+        self._deploy_branch: str | None = None
         # Deploy gate hooks — overridable in tests. Defaults do real I/O.
         self._approval_fn = self._default_approval
         self._verify_fn = self._default_verify
@@ -115,10 +119,13 @@ class LeadAgent(BaseAgent):
         deploy_gate: bool = False,
         auto_approve: bool = False,
         deploy_commit: bool = False,
+        deploy_branch: str | None = None,
         plan_gate: bool = False,
         resume: bool = False,
+        strict_review: bool = False,
     ) -> None:
         self._plan_gate = plan_gate
+        self._deploy_branch = deploy_branch
         phase_list = phases if phases is not None else DEFAULT_PHASES
         self.console.print(Panel(
             f"[bold]Sprint Goal:[/bold]\n{goal.strip()}",
@@ -158,6 +165,7 @@ class LeadAgent(BaseAgent):
             deploy_gate=deploy_gate,
             auto_approve=auto_approve,
             deploy_commit=deploy_commit,
+            strict_review=strict_review,
         )
 
     async def _run_phase(self, agent_role: str, phase_description: str, goal: str) -> None:
@@ -410,8 +418,23 @@ class LeadAgent(BaseAgent):
 
     # ------------------------------------------------------------------ deploy gate
 
+    def _deploy_target(self):
+        """Resolve ``(code_root, profile)`` for the deploy verify/commit step.
+
+        Reads the *live* code root (``ArtifactStore.WORKSPACE``, re-rooted by ``--target-repo``) so
+        verification and commits hit the real project. DailyEase default keeps targeting
+        ``workspace/dailyease/``; any other profile targets the repo/code root directly.
+        """
+        code_root = self.artifacts.WORKSPACE
+        profile = load_profile(code_root, METADATA_ROOT)
+        if profile.app_root == DEFAULT_PROFILE.app_root and (code_root / DEFAULT_PROFILE.app_root).is_dir():
+            # DailyEase greenfield: app lives under workspace/dailyease/.
+            code_root = self.artifacts.dailyease_root()
+        return code_root, profile
+
     async def _default_verify(self) -> tuple[str, str]:
-        return await deploy.run_pytest_smoke(self.artifacts.dailyease_root())
+        code_root, profile = self._deploy_target()
+        return await deploy.run_verify(code_root, profile.verify_cmd)
 
     async def _default_approval(self, summary: str) -> bool:
         """Interactive go/no-go. Without a TTY, do not approve (fail safe)."""
@@ -465,14 +488,35 @@ class LeadAgent(BaseAgent):
         deploy_gate: bool,
         auto_approve: bool,
         deploy_commit: bool,
+        strict_review: bool = False,
     ) -> None:
         self.console.rule("[bold blue]Deploy gate[/bold blue]")
 
         summary = await self._build_deploy_summary(goal)
         verify_status, verify_detail = await self._verify_fn()
-        self.console.log(f"[blue]Verify (pytest smoke): {verify_status}[/blue]")
+        self.console.log(f"[blue]Verify: {verify_status}[/blue]")
         _lead_log.info("deploy_verify status=%s", verify_status)
-        summary += f"\n\nVerification (pytest smoke): {verify_status}"
+        summary += f"\n\nVerification: {verify_status}"
+
+        # --strict-review: unresolved review findings block the deploy, even before sign-off.
+        if strict_review:
+            decisions = await self.memory.recall_all("decision")
+            debt_count = sum(1 for k in decisions if k.startswith("quality_debt_"))
+            if debt_count:
+                self.console.print(Panel(
+                    Text(
+                        f"Deploy blocked by --strict-review: {debt_count} unresolved review "
+                        f"finding(s) (quality debt). Resolve them and re-run.",
+                        style="bold red",
+                    ),
+                    title="[bold red]Deploy Blocked (strict-review)[/bold red]",
+                    border_style="red",
+                ))
+                _lead_log.warning("deploy_blocked strict_review debt=%s", debt_count)
+                await self._write_deploy_record(
+                    goal, "blocked (strict-review)", verify_status, verify_detail, commit_info=None
+                )
+                return
 
         if not deploy_gate:
             self.console.log(
@@ -496,11 +540,15 @@ class LeadAgent(BaseAgent):
 
         commit_info: str | None = None
         if deploy_commit:
-            ok, info = await deploy.git_commit_dir(
-                self.artifacts.dailyease_root(),
-                f"Deploy DailyEase — {goal.strip().splitlines()[0] if goal.strip() else 'sprint'}",
-            )
+            commit_root, _ = self._deploy_target()
+            message = deploy.build_commit_message(goal)
+            if self._deploy_branch:
+                ok, info = await deploy.git_commit_dir(commit_root, message, branch=self._deploy_branch)
+            else:
+                ok, info = await deploy.git_commit_dir(commit_root, message)
             commit_info = f"{'committed ' + info if ok else 'commit skipped: ' + info}"
+            if ok and self._deploy_branch:
+                commit_info += f" (branch {self._deploy_branch})"
             level = "green" if ok else "yellow"
             self.console.log(f"[{level}]Deploy commit: {commit_info}[/{level}]")
 

@@ -1,0 +1,30 @@
+# Eval scenario: the intake preset turns a goal into a requirements document
+# with the sections the PM persona is contracted to produce.
+#
+# This is a DATA file. It declares what a passing run looks like; run_evals.py
+# checks the structural contract here and (when given a real --workspace) the
+# declared artifacts/sections. Live-LLM execution is a separate, opt-in step.
+name: intake_requirements
+description: >
+  Running --preset intake on a product goal produces requirements.md containing
+  the mandatory PM sections.
+preset: intake
+goal: "Capture requirements for a reminders module"
+# Files that must exist under the workspace after a real run.
+expected_artifacts:
+  - requirements.md
+# Markdown headings/sections that must appear in the requirements doc.
+expected_sections:
+  requirements.md:
+    - "Executive Summary"
+    - "Target Users"
+    - "Problem Statement"
+    - "Feature Specifications"
+    - "User Stories"
+    - "API Contract"
+    - "Non-Functional Requirements"
+    - "Out of Scope"
+# No reviewer verdict asserted for this scenario.
+expected_verdict: null
+# Live LLM execution is deferred; fixture/structural checks run today.
+live: false

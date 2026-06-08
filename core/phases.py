@@ -73,6 +73,51 @@ PHASE_PRESETS: dict[str, list[tuple[str, str]] | None] = {
             "Re-verify: update tests if needed, run pytest, refresh QA report",
         ),
     ],
+    "debug": [
+        (
+            "qa",
+            "Reproduce: read the relevant code and tests, then reproduce the reported failure "
+            "(run the failing test/command) and pinpoint where it breaks",
+        ),
+        (
+            "backend",
+            "Localize & patch: fix the root cause in the existing code identified by reproduction; "
+            "keep the change minimal and scoped to the bug",
+        ),
+        (
+            "qa",
+            "Re-verify: re-run the previously failing test/command and confirm the fix; "
+            "add a regression test that guards the bug",
+        ),
+    ],
+    "fix": [
+        (
+            "backend",
+            "Apply fix: read the affected code and implement the known fix per the sprint goal, "
+            "scoped to the change",
+        ),
+        (
+            "qa",
+            "Verify: run the test suite and confirm the fix; add or update tests as needed",
+        ),
+    ],
+    "harden": [
+        (
+            "qa",
+            "Audit & test: read the existing code, run the test suite, and identify reliability, "
+            "edge-case, and error-handling gaps",
+        ),
+        (
+            "backend",
+            "Harden: patch the gaps surfaced by QA — input validation, error handling, and "
+            "robustness — without changing intended behavior",
+        ),
+        (
+            "devops",
+            "Production readiness: review build/CI/deploy config and close operational gaps "
+            "(packaging, health checks, runbook)",
+        ),
+    ],
 }
 
 VALID_ROLES = ("pm", "architect", "backend", "qa", "devops")

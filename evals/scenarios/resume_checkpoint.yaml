@@ -1,0 +1,31 @@
+# Eval scenario: --resume skips phases already recorded as complete.
+#
+# Maps to feedback Part 6 "Resume": --resume with the same goal skips the phases
+# marked done in handoff/checkpoint.json instead of redoing them.
+name: resume_checkpoint
+description: >
+  After an interrupted run leaves a checkpoint with pm + architect complete,
+  re-running with --resume and the same goal skips those phases and continues
+  from backend.
+preset: full
+goal: "Build the MVP of the demo app"
+# Checkpoint state to seed before the resumed run.
+checkpoint:
+  goal: "Build the MVP of the demo app"
+  completed_phases:
+    - pm
+    - architect
+# Phases that should be skipped on resume.
+expected_skipped:
+  - pm
+  - architect
+# Phases that should still run.
+expected_resumed:
+  - backend
+  - qa
+  - devops
+expected_artifacts:
+  - handoff/checkpoint.json
+expected_sections: {}
+expected_verdict: null
+live: false

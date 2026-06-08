@@ -16,7 +16,9 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from core.paths import ROOT, WORKSPACE
+import core.paths as paths
+import core.artifact_store as artifact_store
+from core.paths import ROOT
 from core.phases import PHASE_PRESETS, VALID_ROLES
 from core.ollama_url import validate_ollama_base_url
 from agents.base_agent import (
@@ -59,6 +61,31 @@ def _load_goal_file(path: Path, console: Console) -> str:
         raise SystemExit(2) from e
 
 
+def _apply_target_repo(target_repo: Path | None, console: Console) -> None:
+    """Re-root the code/metadata trees onto an existing repo (``--target-repo``).
+
+    Security: the target must be an explicit, existing directory the caller named. Metadata is
+    isolated under ``<target>/.agentforge`` so AgentForge never writes its bookkeeping into the
+    user's source tree, and the SQLite DB stays under AGENTFORGE_ROOT.
+    """
+    if target_repo is None:
+        return
+    target = target_repo.expanduser().resolve()
+    if not target.exists():
+        console.print(f"[red]Error: --target-repo path does not exist: {target}[/red]")
+        raise SystemExit(2)
+    if not target.is_dir():
+        console.print(f"[red]Error: --target-repo must be a directory: {target}[/red]")
+        raise SystemExit(2)
+    code_root, metadata_root = paths.resolve_roots(str(target))
+    artifact_store.configure_roots(code_root, metadata_root)
+    metadata_root.mkdir(parents=True, exist_ok=True)
+    console.print(
+        f"[cyan]Target repo:[/cyan] {code_root}\n"
+        f"[dim]Metadata under {metadata_root} · DB stays at {paths.DB_PATH}[/dim]"
+    )
+
+
 DEFAULT_GOAL = """
 Build the MVP of DailyEase — a daily life management platform impacting millions of users.
 
@@ -96,7 +123,8 @@ def _resolve_phases(preset: str | None, phases_csv: str | None) -> list[tuple[st
 
 
 def _list_artifacts(console: Console) -> None:
-    if not WORKSPACE.exists():
+    workspace = artifact_store.WORKSPACE
+    if not workspace.exists():
         console.print("[yellow]No artifacts yet. Run a cycle first.[/yellow]")
         return
 
@@ -116,10 +144,10 @@ def _list_artifacts(console: Console) -> None:
         "reports/": "Reports",
     }
 
-    for f in sorted(WORKSPACE.rglob("*")):
+    for f in sorted(workspace.rglob("*")):
         if not f.is_file():
             continue
-        rel = str(f.relative_to(WORKSPACE))
+        rel = str(f.relative_to(workspace))
         size = f"{f.stat().st_size:,} bytes"
         category = "Other"
         for prefix, cat in categories.items():
@@ -139,8 +167,10 @@ async def _run_cycle(
     deploy_gate: bool = False,
     auto_approve: bool = False,
     deploy_commit: bool = False,
+    deploy_branch: str | None = None,
     plan_gate: bool = False,
     resume: bool = False,
+    strict_review: bool = False,
 ) -> None:
     console = Console()
 
@@ -182,8 +212,10 @@ async def _run_cycle(
             deploy_gate=deploy_gate,
             auto_approve=auto_approve,
             deploy_commit=deploy_commit,
+            deploy_branch=deploy_branch,
             plan_gate=plan_gate,
             resume=resume,
+            strict_review=strict_review,
         )
     finally:
         for role in ["pm", "architect", "backend", "qa", "devops"]:
@@ -203,7 +235,7 @@ async def _run_cycle(
     _list_artifacts(console)
     console.print(Panel(
         Text(
-            f"All artifacts written to: {WORKSPACE}\n"
+            f"All artifacts written to: {artifact_store.WORKSPACE}\n"
             f"Project root: {ROOT}\n"
             f"Run with --list-artifacts to see the file tree.",
             style="bold green",
@@ -260,6 +292,14 @@ def main() -> None:
         default=None,
         help="Override preset: comma-separated roles (pm,architect,backend,qa,devops)",
     )
+    parser.add_argument(
+        "--target-repo",
+        type=Path,
+        default=None,
+        help="Operate on an existing repo at PATH (read/write/grep its tree) instead of the "
+        "workspace/ sandbox. AgentForge metadata is isolated under <PATH>/.agentforge "
+        "(env: AGENTFORGE_TARGET_REPO)",
+    )
     parser.add_argument("--list-artifacts", action="store_true", help="List workspace files and exit")
     parser.add_argument("--dry-run", action="store_true", help="Show configuration and exit")
     parser.add_argument(
@@ -280,14 +320,26 @@ def main() -> None:
     parser.add_argument(
         "--deploy-commit",
         action="store_true",
-        help="Commit the generated workspace/dailyease app to its own git repo on deploy "
-        "(env: AGENTFORGE_DEPLOY_COMMIT=1)",
+        help="On deploy, git-commit the target repo (or the generated workspace/dailyease app in "
+        "default mode) with a conventional-commit message (env: AGENTFORGE_DEPLOY_COMMIT=1)",
+    )
+    parser.add_argument(
+        "--deploy-branch",
+        default=None,
+        metavar="NAME",
+        help="With --deploy-commit, create/checkout this branch before committing (PR workflow)",
     )
     parser.add_argument(
         "--plan-gate",
         action="store_true",
         help="Backend shows a build plan for Lead confirmation before writing code "
         "(env: AGENTFORGE_PLAN_GATE=1)",
+    )
+    parser.add_argument(
+        "--strict-review",
+        action="store_true",
+        help="Block the deploy when any unresolved review finding (quality debt) remains, instead "
+        "of shipping with debt flagged (env: AGENTFORGE_STRICT_REVIEW=1)",
     )
     parser.add_argument(
         "--resume",
@@ -312,6 +364,8 @@ def main() -> None:
     if args.verbose or args.log_file is not None:
         _configure_runtime_logging(bool(args.verbose), args.log_file)
         logging.getLogger("agentforge").setLevel(logging.DEBUG if args.verbose else logging.INFO)
+
+    _apply_target_repo(args.target_repo, console)
 
     if args.tui:
         from tui_main import launch_tui
@@ -374,11 +428,12 @@ def main() -> None:
             f"{model_block}\n"
             f"[bold]Thinking:[/bold] {thinking}\n"
             f"[bold]ROOT:[/bold] {ROOT}\n"
-            f"[bold]Workspace:[/bold] {WORKSPACE}\n"
+            f"[bold]Workspace:[/bold] {artifact_store.WORKSPACE}\n"
             f"[bold]Preset:[/bold] {args.preset}\n"
             f"[bold]Phases:[/bold] {phase_desc}\n"
             f"[bold]Deploy gate:[/bold] {gate_desc}\n"
-            f"[bold]Deploy commit:[/bold] {'on' if commit_on else 'off'}\n"
+            f"[bold]Deploy commit:[/bold] {'on' if commit_on else 'off'}"
+            f"{f' → branch {args.deploy_branch}' if (commit_on and args.deploy_branch) else ''}\n"
             f"[bold]Plan gate:[/bold] {'on (backend)' if (args.plan_gate or os.getenv('AGENTFORGE_PLAN_GATE', '').strip().lower() in ('1', 'true', 'yes')) else 'off'}\n"
             f"[bold]Resume:[/bold] {'on' if args.resume else 'off'}\n\n"
             f"[bold]Sprint Goal:[/bold]\n{goal_text.strip()}",
@@ -415,6 +470,7 @@ def main() -> None:
     deploy_gate = args.deploy_gate or _env_flag("AGENTFORGE_DEPLOY_GATE")
     deploy_commit = args.deploy_commit or _env_flag("AGENTFORGE_DEPLOY_COMMIT")
     plan_gate = args.plan_gate or _env_flag("AGENTFORGE_PLAN_GATE")
+    strict_review = args.strict_review or _env_flag("AGENTFORGE_STRICT_REVIEW")
 
     try:
         asyncio.run(_run_cycle(
@@ -424,8 +480,10 @@ def main() -> None:
             deploy_gate=deploy_gate,
             auto_approve=args.auto_approve,
             deploy_commit=deploy_commit,
+            deploy_branch=args.deploy_branch,
             plan_gate=plan_gate,
             resume=args.resume,
+            strict_review=strict_review,
         ))
     except LLMUnavailableError as e:
         console.print(Panel(

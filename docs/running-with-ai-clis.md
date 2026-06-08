@@ -97,6 +97,50 @@ The mapping is 1:1, so the slash commands double as a copy-paste cheatsheet for 
 
 ---
 
+## Work on your existing repo (`--target-repo`)
+
+By default AgentForge writes to its own sandbox under `workspace/`. To operate on a repo you
+already have open in your editor, point it at that repo with `--target-repo PATH` (or
+`AGENTFORGE_TARGET_REPO`):
+
+```bash
+# Read, patch, and test the caller's repo instead of the sandbox
+uv run python main.py --preset improve --target-repo /path/to/my-api \
+  --goal "Fix N+1 queries in the orders router"
+
+# From inside the target repo, "." resolves to that repo
+uv run python main.py --preset test --target-repo . --goal "Add edge cases for DELETE"
+```
+
+What changes in target-repo mode:
+
+- **Code root** becomes the target repo: workers `read_file` / `list_files` / `grep_code` and
+  `write_file` operate on *that* tree, not `workspace/`.
+- **Metadata stays isolated** under `<repo>/.agentforge/` — AgentForge's own bookkeeping
+  (`handoff/`, `reports/`, checkpoints) is written there, **not** scattered into your source
+  tree. The SQLite DB stays under AgentForge's own root, never inside the target repo.
+- Add `.agentforge/` to the target repo's `.gitignore` so AgentForge metadata is not committed.
+
+Security: AgentForge only writes inside the resolved code root and its `.agentforge/` metadata
+dir — paths are validated against those roots, so a run cannot write to arbitrary locations.
+Git commits to the target repo remain opt-in (`--deploy-commit`).
+
+### Structured JSON events for assistants
+
+Host assistants parse Rich console text poorly. Set `AGENTFORGE_JSON_LOG=1` and AgentForge
+emits **one JSON object per line on stderr** — your assistant can tail stderr and consume
+typed events instead of scraping the console:
+
+```bash
+AGENTFORGE_JSON_LOG=1 uv run python main.py --preset improve --target-repo . \
+  --goal "..." 2> events.jsonl
+```
+
+Event types: `phase_complete`, `files_changed`, `review_verdict`, `pytest_result`,
+`exit_summary`. Each line looks like `{"event": "files_changed", "ts": "...", "role": "backend",
+"count": 23, ...}`. The flag is **opt-in**: unset, human console output is unchanged. Tell your
+assistant to tail stderr JSON when summarizing a run.
+
 ## Tips for assistant-driven runs
 
 - **Start with `--dry-run`** — it prints the resolved provider, models, gates, and goal without calling any API.

@@ -1,0 +1,28 @@
+# Eval scenario: a full pipeline run leaves the expected handoff + artifact trail.
+#
+# Maps to feedback Part 6 metrics: "Phase completion" (handoff/<role>.md exists)
+# and "Artifact contract" (required paths exist under the workspace).
+name: full_pipeline_smoke
+description: >
+  The default full pipeline (PM -> Architect -> Backend -> QA -> DevOps) produces
+  a handoff file per role and the core generated app + test artifacts.
+preset: full
+goal: "Build the MVP of the demo app"
+# Phases expected to run, in order. Each should leave a handoff/<role>.md.
+phases:
+  - pm
+  - architect
+  - backend
+  - qa
+  - devops
+expected_artifacts:
+  - handoff/pm.md
+  - handoff/architect.md
+  - handoff/backend.md
+  - handoff/qa.md
+  - handoff/devops.md
+  - reports/qa_report.md
+expected_sections: {}
+expected_verdict: null
+# Full live pipeline is costly; gated behind the live runner (TODO).
+live: false

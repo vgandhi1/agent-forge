@@ -17,13 +17,27 @@ from .base_agent import BaseAgent
 _REVIEWER_TOOLS = [
     {
         "name": "read_file",
-        "description": "Read a file the agent produced so you can review its actual contents.",
+        "description": (
+            "Read a file the agent produced so you can review its actual contents. Returns a "
+            "window of numbered lines; page through large files by passing offset/limit before "
+            "judging so you never miss the rest of a big file."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
                     "description": "Path to the file (workspace-relative or absolute) to read.",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "0-based line offset to start reading from (default 0).",
+                    "default": 0,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of lines to return (default 400, max 2000).",
+                    "default": 400,
                 },
             },
             "required": ["path"],
@@ -69,7 +83,8 @@ _REVIEWER_TOOLS = [
     },
 ]
 
-_MAX_FILE_CHARS = 8000
+# Default line window for read_file; large files are pageable via offset/limit, never silently cut.
+_DEFAULT_READ_LIMIT = 400
 
 
 class ReviewerAgent(BaseAgent):
@@ -101,10 +116,15 @@ class ReviewerAgent(BaseAgent):
         verdict: dict[str, Any] = {}
 
         async def read_file_handler(tool_input: dict) -> str:
-            content = await self.artifacts.read(tool_input["path"])
-            if len(content) > _MAX_FILE_CHARS:
-                content = content[:_MAX_FILE_CHARS] + "\n…[truncated for review]"
-            return content
+            path = tool_input["path"]
+            offset = tool_input.get("offset", 0)
+            limit = tool_input.get("limit", _DEFAULT_READ_LIMIT)
+            # Surface access/not-found markers verbatim; otherwise return a numbered line window
+            # (large files are pageable via offset/limit instead of being truncated at 8k chars).
+            content = await self.artifacts.read(path)
+            if content.startswith("[File not found:") or content.startswith("[Access denied:"):
+                return content
+            return await self.artifacts.read_paginated(path, offset, limit)
 
         async def submit_review_handler(tool_input: dict) -> str:
             verdict.clear()
@@ -115,7 +135,8 @@ class ReviewerAgent(BaseAgent):
             f"Review the {phase_role} agent's artifact before it is accepted.\n\n"
             f"Task brief / phase objective:\n{brief or '(not provided)'}\n\n"
             f"Agent's own summary: {summary}\n\n"
-            f"Files produced — read the ones you need with read_file:\n{file_list}\n\n"
+            f"Files produced — read the ones you need with read_file. read_file returns a window "
+            f"of numbered lines; pass offset to page through large files before judging.\n{file_list}\n\n"
             f"Judge spec compliance, drift, security, logic correctness, and standards. "
             f"Then call submit_review exactly once. Do not approve unless it genuinely meets the brief."
         )

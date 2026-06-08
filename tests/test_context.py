@@ -1,4 +1,4 @@
-from core.context import condense_markdown
+from core.context import condense_markdown, doc_reference
 
 
 def test_short_text_unchanged():
@@ -32,3 +32,23 @@ def test_keeps_document_order_among_chosen():
     out = condense_markdown(text, len(a) + len(c) + 40, prefer=["api"])
     assert "# A" in out and "# C" in out and "# B" not in out
     assert out.index("# A") < out.index("# C")  # original order preserved
+
+
+def test_doc_reference_empty_is_blank():
+    assert doc_reference("docs/x.md", "", label="X") == ""
+    assert doc_reference("docs/x.md", "   \n", label="X") == ""
+
+
+def test_doc_reference_small_doc_inlined_whole():
+    out = doc_reference("docs/architecture.md", "# Arch\nshort", label="Architecture", digest_chars=1000)
+    assert "docs/architecture.md" in out
+    assert "# Arch" in out
+    assert "read_file" not in out  # fits whole, no pointer needed
+
+
+def test_doc_reference_large_doc_points_to_path():
+    big = "# Arch\n" + ("detail line. " * 400)
+    out = doc_reference("docs/architecture.md", big, label="Architecture", digest_chars=500)
+    assert "read_file" in out                 # tells the agent to read the full doc
+    assert "`docs/architecture.md`" in out    # canonical path named
+    assert len(out) < len(big)                # only a digest is inlined

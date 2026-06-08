@@ -1,7 +1,9 @@
 from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
-from core.context import condense_markdown
+from core.context import condense_markdown, doc_reference
+from core.paths import WORKSPACE, METADATA_ROOT
+from core.profile import Profile, load_profile
 from .base_agent import BaseAgent
 
 _PREFER = ["task", "habit", "finance", "wellness", "schema", "api", "endpoint", "database", "model", "router"]
@@ -9,13 +11,13 @@ _PREFER = ["task", "habit", "finance", "wellness", "schema", "api", "endpoint", 
 _TOOLS = [
     {
         "name": "write_file",
-        "description": "Write a Python source file to the DailyEase workspace",
+        "description": "Write a source file to the project",
         "input_schema": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path relative to workspace/, e.g. dailyease/main.py or dailyease/routers/tasks.py",
+                    "description": "Path relative to the code root, e.g. src/main.py or src/routers/tasks.py",
                 },
                 "content": {"type": "string", "description": "Complete file content — no truncation"},
             },
@@ -51,6 +53,68 @@ _REQUIRED_FILES = [
 ]
 
 
+def required_files(profile: Profile) -> list[str]:
+    """Return the fixed greenfield checklist only for the DailyEase default profile.
+
+    Any other profile (improve/debug/fix/harden on an existing repo) gets no fixed checklist —
+    the agent is expected to read existing code and write under ``profile.app_root``.
+    """
+    return list(_REQUIRED_FILES) if profile.app_root == "dailyease" else []
+
+
+def build_prompt(profile: Profile, *, plan_notes: str, sprint_goal: str,
+                 arch_content: str, req_content: str, task_description: str,
+                 arch_path: str = "docs/architecture.md",
+                 req_path: str = "docs/requirements.md") -> str:
+    """Construct the backend build prompt, profile-driven.
+
+    DailyEase default keeps the exact 23-file FastAPI checklist behavior; other profiles instruct
+    the agent to inspect existing code first and write to ``profile.app_root`` using ``profile.stack``.
+
+    Upstream docs are passed path-first (small digest + ``read_file`` pointer) rather than as a
+    large inlined blob, so the agent can read the whole document on demand instead of losing the
+    sections that condensing dropped.
+    """
+    arch_block = doc_reference(arch_path, arch_content, label="Architecture Document",
+                               digest_chars=2200, prefer=_PREFER)
+    req_block = doc_reference(req_path, req_content, label="Requirements Summary",
+                              digest_chars=1500, prefer=_PREFER)
+
+    if profile.app_root == "dailyease":
+        files = required_files(profile)
+        return (
+            f"{plan_notes}"
+            f"Implement the complete DailyEase FastAPI application.\n\n"
+            f"Sprint goal (context): {sprint_goal}\n\n"
+            f"{arch_block}"
+            f"{req_block}"
+            f"Task: {task_description}\n\n"
+            f"Write ALL of these files using write_file — one call per file, "
+            f"continuing across turns until every file is written:\n"
+            + "\n".join(f"- {f}" for f in files)
+            + "\n\nEvery file must be complete and functional. "
+            f"Use SQLAlchemy 2.x async + aiosqlite + FastAPI + Pydantic v2. "
+            f"Include proper error handling in all routers. "
+            f"Reply without a tool call only when all files are written."
+        )
+
+    stack = ", ".join(profile.stack) if profile.stack else "the project's existing stack"
+    return (
+        f"{plan_notes}"
+        f"Implement the change in the existing {profile.name} project.\n\n"
+        f"Sprint goal (context): {sprint_goal}\n\n"
+        f"{arch_block}"
+        f"{req_block}"
+        f"Task: {task_description}\n\n"
+        f"First, read the existing code: use read_file/list_files/grep_code to understand the "
+        f"current layout, conventions, and the code you need to change before writing anything. "
+        f"Write your changes under {profile.app_root}/ using write_file (one call per file), "
+        f"matching the existing style and using {stack} for tech choices. "
+        f"Keep changes scoped to the task. "
+        f"Reply without a tool call only when all changes are written."
+    )
+
+
 class BackendDeveloperAgent(BaseAgent):
     async def run(self) -> None:
         while True:
@@ -65,6 +129,9 @@ class BackendDeveloperAgent(BaseAgent):
     async def _handle_task(self, msg: Message) -> None:
         task = msg.payload
         self.console.log(f"[green]Backend[/green] starting: {task.get('deliverable', '')}")
+
+        profile = load_profile(WORKSPACE, METADATA_ROOT)
+        checklist = required_files(profile)
 
         approved_artifacts = task.get("approved_artifacts", {})
         arch_path = approved_artifacts.get("architect_artifact", "docs/architecture.md")
@@ -90,7 +157,9 @@ class BackendDeveloperAgent(BaseAgent):
             await self.memory.remember(f"wrote_{path}", str(full_path), "artifact_ref")
             self.console.log(f"[green]Backend[/green] wrote: {full_path}")
             size = len(tool_input.get("content", ""))
-            remaining = [f for f in _REQUIRED_FILES if not any(f in w for w in written_files)]
+            if not checklist:
+                return f"Wrote {path} ({size} bytes)."
+            remaining = [f for f in checklist if not any(f in w for w in written_files)]
             hint = (
                 f" {len(remaining)} required files still missing: {', '.join(remaining[:5])}"
                 + ("…" if len(remaining) > 5 else "")
@@ -100,28 +169,24 @@ class BackendDeveloperAgent(BaseAgent):
             return f"Wrote {path} ({size} bytes).{hint}"
 
         await self.run_tool_loop(
-            user_message=(
-                f"{plan_notes}"
-                f"Implement the complete DailyEase FastAPI application.\n\n"
-                f"Sprint goal (context): {sprint_goal}\n\n"
-                f"Architecture Document:\n```markdown\n{condense_markdown(arch_content, 7000, _PREFER)}\n```\n\n"
-                f"Requirements Summary:\n```markdown\n{condense_markdown(req_content, 3500, _PREFER)}\n```\n\n"
-                f"Task: {task['task_description']}\n\n"
-                f"Write ALL of these files using write_file — one call per file, "
-                f"continuing across turns until every file is written:\n"
-                + "\n".join(f"- {f}" for f in _REQUIRED_FILES)
-                + "\n\nEvery file must be complete and functional. "
-                f"Use SQLAlchemy 2.x async + aiosqlite + FastAPI + Pydantic v2. "
-                f"Include proper error handling in all routers. "
-                f"Reply without a tool call only when all files are written."
+            user_message=build_prompt(
+                profile,
+                plan_notes=plan_notes,
+                sprint_goal=sprint_goal,
+                arch_content=arch_content,
+                req_content=req_content,
+                task_description=task["task_description"],
+                arch_path=arch_path,
+                req_path=req_path,
             ),
             tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=_TOOLS,
             max_steps=40,
+            read_tools=True,
         )
 
-        primary_path = "dailyease/main.py"
+        primary_path = written_files[0] if written_files and not checklist else "dailyease/main.py"
 
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,
@@ -131,14 +196,18 @@ class BackendDeveloperAgent(BaseAgent):
                 "files": written_files,
                 "primary_path": primary_path,
                 "path": primary_path,
-                "summary": f"DailyEase FastAPI app implemented ({len(written_files)} files)",
+                "summary": (
+                    f"DailyEase FastAPI app implemented ({len(written_files)} files)"
+                    if checklist
+                    else f"Implementation written ({len(written_files)} files)"
+                ),
             },
             correlation_id=msg.message_id,
             priority=2,
         ))
 
         async def _revise_cb(notes: str) -> None:
-            await self._revise(notes, msg, written_files)
+            await self._revise(notes, msg, written_files, primary_path)
 
         await self._await_reviews("Backend", _revise_cb)
 
@@ -176,7 +245,8 @@ class BackendDeveloperAgent(BaseAgent):
             return f"Architect redirected your plan — incorporate this before building:\n{notes}\n\n"
         return ""
 
-    async def _revise(self, notes: str, original_msg: Message, prior_files: list[str]) -> None:
+    async def _revise(self, notes: str, original_msg: Message, prior_files: list[str],
+                      primary_path: str = "dailyease/main.py") -> None:
         context = await self._build_dynamic_context()
         files_summary = "\n".join(prior_files[:10])
 
@@ -200,6 +270,7 @@ class BackendDeveloperAgent(BaseAgent):
             dynamic_context=context,
             tools=_TOOLS,
             max_steps=40,
+            read_tools=True,
         )
 
         await self.bus.publish(Message(
@@ -208,8 +279,8 @@ class BackendDeveloperAgent(BaseAgent):
             recipient="lead",
             payload={
                 "files": written_files,
-                "primary_path": "dailyease/main.py",
-                "path": "dailyease/main.py",
+                "primary_path": primary_path,
+                "path": primary_path,
                 "summary": f"Revised implementation ({len(written_files)} files updated)",
             },
             correlation_id=original_msg.message_id,

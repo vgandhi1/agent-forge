@@ -62,3 +62,31 @@ def condense_markdown(text: str, max_chars: int, prefer: list[str] | None = None
     if len(chosen) < len(sections):
         out += "\n\n…[context condensed: less-relevant sections omitted]"
     return out
+
+
+def doc_reference(
+    path: str,
+    content: str,
+    *,
+    label: str,
+    digest_chars: int = 1800,
+    prefer: list[str] | None = None,
+) -> str:
+    """Build a path-first context block: a short digest plus a pointer to read the full doc.
+
+    Workers now have ``read_file`` (paginated), so instead of inlining a large condensed blob —
+    which silently drops the rest of the document — give a small orientation digest and the
+    canonical path so the agent reads the full doc on demand. Returns ``""`` when there is no
+    content. When the doc already fits inside ``digest_chars`` it is inlined whole (no pointer
+    needed). Otherwise the block names the path and tells the agent to ``read_file`` for detail.
+    """
+    content = content or ""
+    if not content.strip():
+        return ""
+    if len(content) <= digest_chars:
+        return f"{label} (full, at `{path}`):\n```markdown\n{content}\n```\n\n"
+    digest = condense_markdown(content, digest_chars, prefer)
+    return (
+        f"{label} — digest below; **read the full document with read_file at `{path}`** "
+        f"before relying on details:\n```markdown\n{digest}\n```\n\n"
+    )
