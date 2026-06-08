@@ -1,0 +1,9 @@
+{
+  "goal_fp": "demo-app-mvp",
+  "goal": "Build the MVP of the demo app",
+  "completed": ["pm", "architect"],
+  "artifacts": {
+    "pm_artifact": "docs/requirements.md",
+    "architect_artifact": "docs/architecture.md"
+  }
+}

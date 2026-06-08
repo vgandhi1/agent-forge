@@ -156,6 +156,10 @@ The pipeline runs autonomously by default. These flags add checkpoints; **all de
 | `--deploy-commit` | `AGENTFORGE_DEPLOY_COMMIT=1` | On approval, commit the generated `workspace/dailyease` app to its **own** git repo (init if needed; never touches the AgentForge repo). |
 | `--plan-gate` | `AGENTFORGE_PLAN_GATE=1` | Backend proposes a build plan; the Lead confirms or redirects before any code is written. Fail-open if no response. |
 | `--resume` | — | Skip phases already completed for the **same goal**, reading `handoff/checkpoint.json`; restores upstream artifact references. |
+| `--strict-review` | `AGENTFORGE_STRICT_REVIEW=1` | Block the deploy when any unresolved review finding (quality debt) remains, instead of shipping with it flagged. |
+| `--deploy-branch NAME` | — | With `--deploy-commit`, check out/create branch `NAME` in the target repo before committing (PR workflow). |
+
+With `--deploy-gate`, when a phase **escalates** an ambiguous decision the Lead pauses mid-sprint to invite your guidance (recorded for the team); without a TTY it records nothing and continues so unattended runs never block.
 
 Examples:
 
@@ -173,6 +177,27 @@ uv run python main.py --resume    --goal "Finance module"
 
 Outputs from these: `reports/deploy_record.md` (deploy decision + verify result), `reports/known_gaps.md` (deferred out-of-scope items + reviewer drift), `handoff/<role>.md` and `handoff/checkpoint.json` (per-phase trail + resume state). Preview any combination with `--dry-run`.
 
+### Per-phase guardrail hooks (optional)
+
+Run your own lint or smoke check **around every phase** without touching AgentForge: commit an
+executable at `.agentforge/hooks/pre-phase` and/or `.agentforge/hooks/post-phase`. The Lead runs
+it before/after each phase with the phase role in the environment (`AGENTFORGE_PHASE_ROLE`,
+`AGENTFORGE_HOOK_STAGE`). Hooks are opt-in by presence and **advisory** — a non-zero exit is
+surfaced but does not abort the sprint.
+
+```bash
+# .agentforge/hooks/post-phase  (chmod +x)
+#!/bin/sh
+[ "$AGENTFORGE_PHASE_ROLE" = "backend" ] && ruff check . || true
+```
+
+### Machine-readable output (host assistants)
+
+Set `AGENTFORGE_JSON_LOG=1` to emit one JSON event per line on **stderr** (`phase_complete`,
+`files_changed`, `review_verdict`, `pytest_result`, `exit_summary`) for reliable parsing by a
+host tool. Off by default; human console output is unchanged. The browser UI sets this
+automatically and renders typed progress.
+
 ### Presets (which agents run)
 
 | Preset | Agents (order) |
@@ -184,6 +209,12 @@ Outputs from these: `reports/deploy_record.md` (deploy decision + verify result)
 | `test` | QA only — tests + `pytest` under `workspace/dailyease` |
 | `ship` | DevOps only — Docker, CI, deployment doc |
 | `improve` | Backend + QA — improvements pass |
+| `debug` | QA → backend → QA — reproduce → patch → re-verify a bug |
+| `fix` | Backend → QA — apply a known fix → verify |
+| `harden` | QA → backend → DevOps — audit → patch → production readiness |
+
+The `debug` / `fix` / `harden` presets are aimed at an **existing** repo — pair them with
+`--target-repo PATH` (section C above) so the workers read, patch, and verify the real code.
 
 Examples:
 
@@ -276,7 +307,12 @@ uv run python main.py --list-artifacts
 
 ```bash
 uv sync --group dev
-uv run pytest
+uv run pytest                      # unit suite (plumbing, mocked LLM)
+uv run python evals/run_evals.py   # agent evals (pipeline contracts, fixture-graded)
 ```
+
+The eval suite grades each scenario's artifact contract against a committed fixture tree
+(`evals/fixtures/`), so it runs deterministically in CI alongside the unit tests. See
+[evaluation.md](evaluation.md) and [`../evals/README.md`](../evals/README.md).
 
 For architecture details (message bus, Lead approvals, caching), see `agents_plan.md`.

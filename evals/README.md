@@ -36,11 +36,12 @@ behind a future live runner — currently skipped).
 |-----|----------|---------|
 | `name` | yes | Unique scenario id (defaults to file stem) |
 | `description` | yes | One-line summary |
-| `preset` | yes | One of `full/intake/design/implement/test/ship/improve` |
+| `preset` | yes | One of `full/intake/design/implement/test/ship/improve/debug/fix/harden` |
 | `goal` | yes | The goal string a real run would use |
-| `expected_artifacts` | no | Paths that must exist under the workspace |
+| `expected_artifacts` | no | Paths that must exist under the grading root |
 | `expected_sections` | no | `{file: [headings]}` that must appear in that file |
 | `expected_verdict` | no | `approve` / `reject` / `escalate` / null |
+| `fixture` | no | Committed tree under `evals/fixtures/` graded when no `--workspace` is given |
 | `live` | no | `true` if the scenario needs a real LLM run (skipped for now) |
 
 ## Running
@@ -56,9 +57,11 @@ uv run python evals/run_evals.py --workspace workspace
 uv run python evals/run_evals.py --help
 ```
 
-A scenario passes when its schema is valid and (with `--workspace`) every declared
-artifact exists and every required section is present. The runner exits non-zero if any
-scenario fails, so it can gate CI.
+A scenario passes when its schema is valid and every declared artifact exists and every
+required section is present in the **grading root** — `--workspace PATH` if given, else the
+scenario's committed `fixture:` tree under `evals/fixtures/`. Fixtures make the suite
+deterministic in CI without a live run. The runner exits non-zero if any scenario fails, so
+it gates CI (`.github/workflows/ci.yml` runs it after the unit suite).
 
 ## What is not here yet (TODO)
 

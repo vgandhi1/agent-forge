@@ -35,8 +35,10 @@ State the operating contract up front. For host assistants this is the dual-agen
 in the README and the slash commands: *AgentForge runs its own LLM pass; your assistant only
 launches, monitors, and summarizes.*
 
-- **Today:** `.claude/commands/agentforge*.md` carry per-command guidance.
-- **Gap:** a root `AGENTS.md` / `CLAUDE.md` would extend this to Cursor/Codex users.
+- **Today:** `.claude/commands/agentforge*.md` carry per-command guidance, and a root
+  `AGENTS.md` extends the dual-agent contract to Cursor/Codex/Aider users, alongside
+  `.cursor/rules/agentforge.md` and `.vscode/tasks.json`.
+- **Gap:** none outstanding for this step; keep the contract in sync as new host tools appear.
 
 ## Step 3: Fresh context, plan first
 
@@ -78,17 +80,23 @@ Guardrails that run automatically keep quality from drifting. (The source roadma
 this "gaurrails"; corrected here.)
 
 - **Today:** the `--deploy-gate` runs a `pytest` smoke check before shipping; GitHub CI runs
-  the unit suite.
-- **Gap:** optional `.agentforge/hooks/pre-phase` / `post-phase` (lint, pytest smoke) to run
-  guardrails per phase rather than only at the deploy gate.
+  the unit suite *and* `evals/run_evals.py`. Optional per-phase hooks are also wired: drop an
+  executable at `.agentforge/hooks/pre-phase` or `post-phase` and the Lead runs it around
+  every phase (with `AGENTFORGE_PHASE_ROLE` / `AGENTFORGE_HOOK_STAGE` in the environment) for
+  a lint or pytest smoke. Hooks are opt-in by presence and advisory — a non-zero exit is
+  surfaced but does not abort the sprint. See `core/hooks.py`.
+- **Gap:** none blocking; making a failing hook *hard-block* a phase (vs. advisory) is a
+  future opt-in.
 
 ## Step 8: Trusted long-term context
 
 Memory and retrieval the agents can rely on across turns.
 
 - **Today:** SQLite `AgentMemory` and `handoff/checkpoint.json` persist decisions and
-  artifact references.
-- **Gap:** no RAG over a target repo yet; add once `--target-repo` mode matures.
+  artifact references. `--target-repo` mode is shipped, so agents read the live repo via
+  `read_file` / `grep_code` instead of relying on a stale index.
+- **Gap:** RAG indexing over a target repo only; `grep` + `read_file` cover most bug-fix
+  and refactor work, so this is deferred to Phase C and pulled in only for very large repos.
 
 ## Step 9: The eval suite (the largest gap, now scaffolded)
 
@@ -96,9 +104,14 @@ Measure end-to-end quality with pass/fail criteria, not "looks good." This lives
 [`../evals/`](../evals): declarative scenarios graded by `run_evals.py`.
 
 ```bash
-uv run python evals/run_evals.py               # validate scenario schemas
-uv run python evals/run_evals.py --workspace workspace   # grade a produced run
+uv run python evals/run_evals.py               # schema + committed-fixture grading
+uv run python evals/run_evals.py --workspace workspace   # grade a produced run instead
 ```
+
+Scenarios with an `expected_artifacts` contract commit a small **fixture tree** under
+`evals/fixtures/` and declare it with a `fixture:` key, so `run_evals.py` grades the real
+artifact/section contract deterministically in CI — no live pipeline run required. Passing
+`--workspace PATH` overrides the fixture to grade a freshly produced run.
 
 Current scenarios:
 

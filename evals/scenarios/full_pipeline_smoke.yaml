@@ -24,5 +24,7 @@ expected_artifacts:
   - reports/qa_report.md
 expected_sections: {}
 expected_verdict: null
+# Committed tree graded deterministically when no --workspace is given.
+fixture: fixtures/full_pipeline
 # Full live pipeline is costly; gated behind the live runner (TODO).
 live: false

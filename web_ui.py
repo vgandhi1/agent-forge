@@ -31,6 +31,25 @@ MAX_GOAL_CHARS = 500_000
 AGENT_ROLES = ("lead", "pm", "architect", "backend", "qa", "devops")
 
 
+def _parse_event_line(text: str) -> dict | None:
+    """Return a structured AgentForge JSON event from a stderr line, or None.
+
+    The subprocess is launched with ``AGENTFORGE_JSON_LOG=1`` (see ``core/events.py``), which
+    writes one JSON object per line on stderr. Only well-formed objects carrying a string
+    ``event`` field are treated as typed progress; anything else is plain log text.
+    """
+    text = text.strip()
+    if not (text.startswith("{") and text.endswith("}")):
+        return None
+    try:
+        obj = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if isinstance(obj, dict) and isinstance(obj.get("event"), str):
+        return obj
+    return None
+
+
 def _apply_llm_env(env: dict[str, str], llm: dict | None) -> str | None:
     """Merge Web UI LLM selections into the subprocess environment. Returns an error message or None."""
     if not llm:
@@ -751,6 +770,10 @@ def create_app() -> FastAPI:
             })
             return
 
+        # Ask the subprocess for structured JSON events on stderr so the UI can show typed
+        # progress (phase_complete, review_verdict, pytest_result, …) instead of raw log text.
+        env["AGENTFORGE_JSON_LOG"] = "1"
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable,
@@ -762,7 +785,7 @@ def create_app() -> FastAPI:
                 "--skip-summary",
                 cwd=str(REPO_ROOT),
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
+                stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
         except OSError:
@@ -777,14 +800,34 @@ def create_app() -> FastAPI:
             })
             return
 
-        assert proc.stdout is not None
-        try:
+        assert proc.stdout is not None and proc.stderr is not None
+
+        async def pump_stdout() -> None:
             while True:
                 line = await proc.stdout.readline()
                 if not line:
                     break
                 text = line.decode("utf-8", errors="replace")
                 await websocket.send_json({"type": "line", "text": text.rstrip("\r\n")})
+
+        async def pump_stderr() -> None:
+            # Stderr carries structured JSON events (typed progress) interleaved with any
+            # plain stderr text; route each accordingly.
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").rstrip("\r\n")
+                event = _parse_event_line(text)
+                if event is not None:
+                    await websocket.send_json(
+                        {"type": "event", "event": event["event"], "data": event}
+                    )
+                elif text.strip():
+                    await websocket.send_json({"type": "line", "text": text})
+
+        try:
+            await asyncio.gather(pump_stdout(), pump_stderr())
             code = await proc.wait()
             await websocket.send_json({"type": "exit", "code": int(code or 0)})
         except (WebSocketDisconnect, asyncio.CancelledError):

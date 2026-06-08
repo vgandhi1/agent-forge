@@ -74,7 +74,8 @@ uv run python main.py --web            # http://127.0.0.1:8755
 uv run python main.py --list-artifacts
 ```
 
-Presets: `full` (default), `intake`, `design`, `implement`, `test`, `ship`, `improve`.
+Presets: `full` (default), `intake`, `design`, `implement`, `test`, `ship`, `improve`, plus the
+existing-repo bug/hardening presets `debug`, `fix`, `harden` (pair with `--target-repo`).
 
 ### Install globally / run from any repo
 
@@ -135,6 +136,8 @@ Missing packages → run `uv sync` (or `pip install -r requirements.txt`). API e
 - **[docs/running-with-ai-clis.md](docs/running-with-ai-clis.md)** — drive AgentForge from any AI coding assistant (Claude Code, Cursor, Codex, …)  
 - **[docs/ollama.md](docs/ollama.md)** — run on local models; Windows-Ollama + WSL setup, model choice, diagnostics  
 - **[docs/agents_plan.md](docs/agents_plan.md)** — architecture, env var table, deployment phases  
+- **[docs/evaluation.md](docs/evaluation.md)** — 9-step agent-quality roadmap mapped to AgentForge presets, gates, and metrics  
+- **[evals/README.md](evals/README.md)** — fixture-based pipeline eval suite (`run_evals.py`) and scenario contracts  
 - **[docs/github-repository.md](docs/github-repository.md)** — GitHub description, topics, `gh repo create`, public vs private  
 
 Claude Code shortcut: [.claude/commands/agentforge.md](.claude/commands/agentforge.md)
