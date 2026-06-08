@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentforge"
-version = "0.2.3"
+version = "0.3.0"
 description = "Multi-agent intake, design, implementation, QA, and DevOps orchestration"
 readme = "README.md"
 license = { text = "MIT" }

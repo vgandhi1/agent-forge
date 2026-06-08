@@ -1,0 +1,24 @@
+# Eval scenario: the Reviewer rejects work that does not meet the brief.
+#
+# Maps to feedback Part 6 "Review gate": the Reviewer returns a structured verdict
+# and silence is never treated as approval. This scenario is fixture-driven: a
+# deliberately incomplete artifact is fed to the Reviewer and a "reject" verdict
+# is expected.
+name: reviewer_reject
+description: >
+  Given a backend artifact that omits required modules, the Reviewer returns a
+  structured reject verdict with at least one Must Fix item.
+preset: implement
+goal: "Implement the task module"
+# Fixture artifact placed in the workspace before the (future) live review.
+fixture_artifacts:
+  - path: src/main.py
+    content: |
+      # Intentionally incomplete: no routers, no models, no error handling.
+      app = None
+# The verdict the Reviewer must return for this fixture.
+expected_verdict: reject
+expected_artifacts: []
+expected_sections: {}
+# Live reviewer call is deferred; structural contract is checked today.
+live: false

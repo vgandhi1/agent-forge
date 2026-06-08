@@ -90,6 +90,29 @@ cp .env.example .env
 
 Set variables the same way: **edit `.env`** (loaded by dotenv) and/or **export** in the shell before `python main.py`.
 
+### Option C — Install globally / run from any repo
+
+Install the `agentforge` command once, then drive **any** project from its own directory without
+cloning or `cd`-ing into AgentForge:
+
+```bash
+# from the agent-forge checkout (the dir with main.py):
+uv tool install .      # or: pipx install .
+```
+
+Now, from inside any project directory:
+
+```bash
+agentforge --preset debug --target-repo . --goal "Fix the failing finance tests"
+```
+
+`--target-repo .` points the workers at the current repo while AgentForge keeps its **own**
+bookkeeping (the `agentforge.db` and default `workspace/`) **out** of that directory. Without
+`--target-repo`, an installed run uses **`~/.agentforge`** as its sandbox instead of polluting your
+cwd. Override the bookkeeping location with **`AGENTFORGE_HOME`** (e.g. `~/.agentforge` → elsewhere)
+or **`AGENTFORGE_ROOT`** (absolute path, highest priority). When you run from the AgentForge source
+checkout itself, behavior is unchanged: ROOT stays the repo root.
+
 ### Ollama (local LLM)
 
 Set `AGENTFORGE_LLM_PROVIDER=ollama` and run [Ollama](https://ollama.com/) (`ollama serve`). Each role can use a different model via `AGENTFORGE_OLLAMA_MODEL_LEAD`, `AGENTFORGE_OLLAMA_MODEL_PM`, … (see `.env.example`). Defaults fall back to `AGENTFORGE_OLLAMA_MODEL` or `llama3.2`. Use models that support **tool calling** for best results.

@@ -7,16 +7,18 @@ from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
 from core.context import condense_markdown
+from core.paths import WORKSPACE, METADATA_ROOT
+from core.profile import Profile, load_profile
 from .base_agent import BaseAgent
 
 _TOOLS = [
     {
         "name": "write_file",
-        "description": "Write a test file or QA report to the workspace",
+        "description": "Write a test file or QA report to the project",
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Path relative to workspace/"},
+                "path": {"type": "string", "description": "Path relative to the code root"},
                 "content": {"type": "string", "description": "Complete file content"},
             },
             "required": ["path", "content"],
@@ -33,6 +35,52 @@ _QA_FILES = [
     "dailyease/tests/test_wellness.py",
     "reports/qa_report.md",
 ]
+
+
+def qa_files(profile: Profile) -> list[str]:
+    """Return the fixed DailyEase test checklist only for the greenfield default profile."""
+    return list(_QA_FILES) if profile.app_root == "dailyease" else []
+
+
+def build_qa_prompt(profile: Profile, *, sprint_goal: str, impl_summary: str,
+                    code_excerpts: str, task_description: str) -> str:
+    """Construct the QA prompt, profile-driven.
+
+    DailyEase default keeps the fixed test-file checklist; other profiles instruct the agent to
+    read existing code/tests first and write tests under ``profile.app_root``.
+    """
+    if profile.app_root == "dailyease":
+        files = qa_files(profile)
+        return (
+            f"Write a complete pytest test suite for DailyEase and a QA report.\n\n"
+            f"Sprint goal (context): {sprint_goal}\n\n"
+            f"Implementation files available:\n{impl_summary}\n\n"
+            f"{code_excerpts}"
+            f"Task: {task_description}\n\n"
+            f"Write ALL of these files using write_file:\n"
+            + "\n".join(f"- {f}" for f in files)
+            + "\n\nTests must use pytest + httpx.AsyncClient + pytest-asyncio. "
+            f"conftest.py must set up an async test database (SQLite in-memory). "
+            f"Write at least 5 tests per module (CRUD + edge cases). "
+            f"QA report must include: executive summary, test coverage matrix, bugs found, recommendations."
+        )
+
+    stack = ", ".join(profile.stack) if profile.stack else "the project's existing stack"
+    verify = " ".join(profile.verify_cmd)
+    return (
+        f"Verify the change in the existing {profile.name} project and report on it.\n\n"
+        f"Sprint goal (context): {sprint_goal}\n\n"
+        f"Implementation files available:\n{impl_summary}\n\n"
+        f"{code_excerpts}"
+        f"Task: {task_description}\n\n"
+        f"First, read the existing code and tests: use read_file/list_files/grep_code to find the "
+        f"relevant modules and the existing test layout/conventions before writing anything. "
+        f"Reproduce the reported behavior where applicable, then add or update tests under "
+        f"{profile.app_root}/ using write_file, matching the existing style and {stack}. "
+        f"The suite is verified with `{verify}`. "
+        f"Write a QA report to reports/qa_report.md covering: summary, what was reproduced/verified, "
+        f"bugs found, and recommendations."
+    )
 
 
 class QAEngineerAgent(BaseAgent):
@@ -77,7 +125,9 @@ class QAEngineerAgent(BaseAgent):
         task = msg.payload
         self.console.log(f"[yellow]QA[/yellow] starting: {task.get('deliverable', '')}")
 
-        impl_files = self.artifacts.list_files("dailyease")
+        profile = load_profile(WORKSPACE, METADATA_ROOT)
+
+        impl_files = self.artifacts.list_files(profile.app_root)
         ws = self.artifacts.WORKSPACE
         rel_paths: list[str] = []
         for p in impl_files[:30]:
@@ -87,27 +137,26 @@ class QAEngineerAgent(BaseAgent):
                 rel_paths.append(str(p))
         impl_summary = "\n".join(rel_paths)
 
-        main_content = await self.artifacts.read("dailyease/main.py")
-        tasks_router = await self.artifacts.read("dailyease/routers/tasks.py")
-        habits_router = await self.artifacts.read("dailyease/routers/habits.py")
+        code_excerpts = ""
+        if profile.app_root == "dailyease":
+            main_content = await self.artifacts.read("dailyease/main.py")
+            tasks_router = await self.artifacts.read("dailyease/routers/tasks.py")
+            habits_router = await self.artifacts.read("dailyease/routers/habits.py")
+            code_excerpts = (
+                f"main.py:\n```python\n{main_content[:2000]}\n```\n\n"
+                f"routers/tasks.py:\n```python\n{tasks_router[:2000]}\n```\n\n"
+                f"routers/habits.py:\n```python\n{habits_router[:1500]}\n```\n\n"
+            )
 
         context = await self._build_dynamic_context()
         sprint_goal = task.get("sprint_goal", "")
 
-        user_msg = (
-            f"Write a complete pytest test suite for DailyEase and a QA report.\n\n"
-            f"Sprint goal (context): {sprint_goal}\n\n"
-            f"Implementation files available:\n{impl_summary}\n\n"
-            f"main.py:\n```python\n{main_content[:2000]}\n```\n\n"
-            f"routers/tasks.py:\n```python\n{tasks_router[:2000]}\n```\n\n"
-            f"routers/habits.py:\n```python\n{habits_router[:1500]}\n```\n\n"
-            f"Task: {task['task_description']}\n\n"
-            f"Write ALL of these files using write_file:\n"
-            + "\n".join(f"- {f}" for f in _QA_FILES)
-            + "\n\nTests must use pytest + httpx.AsyncClient + pytest-asyncio. "
-            f"conftest.py must set up an async test database (SQLite in-memory). "
-            f"Write at least 5 tests per module (CRUD + edge cases). "
-            f"QA report must include: executive summary, test coverage matrix, bugs found, recommendations."
+        user_msg = build_qa_prompt(
+            profile,
+            sprint_goal=sprint_goal,
+            impl_summary=impl_summary,
+            code_excerpts=code_excerpts,
+            task_description=task["task_description"],
         )
 
         written_files = await self._generate_tests(user_msg, context)
@@ -171,6 +220,7 @@ class QAEngineerAgent(BaseAgent):
             dynamic_context=context,
             tools=_TOOLS,
             max_steps=24,
+            read_tools=True,
         )
         return written_files
 

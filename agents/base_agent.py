@@ -17,6 +17,7 @@ from core.message_types import Message, MessageType
 from core.memory import AgentMemory
 from core.artifact_store import ArtifactStore
 from core.ollama_url import validate_ollama_base_url
+from core.events import emit
 
 USE_THINKING = os.getenv("AGENTFORGE_THINKING", "false").lower() == "true"
 THINKING_BUDGET = int(os.getenv("AGENTFORGE_THINKING_BUDGET", "8000"))
@@ -352,6 +353,56 @@ _REQUEST_DECISION_TOOL = {
         "required": ["question"],
     },
 }
+
+_READ_FILE_TOOL = {
+    "name": "read_file",
+    "description": (
+        "Read an existing file from the project to inspect code before changing it. "
+        "Returns numbered lines for a window. Use offset/limit to page through large files."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Path relative to the project root"},
+            "offset": {"type": "integer", "description": "First line to read (0-based, default 0)"},
+            "limit": {"type": "integer", "description": "Max lines to return (default 400, max 2000)"},
+        },
+        "required": ["path"],
+    },
+}
+
+_LIST_FILES_TOOL = {
+    "name": "list_files",
+    "description": "List project files matching a glob (recursive) to map the tree before editing.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "pattern": {"type": "string", "description": "Glob, e.g. '*.py' or 'routers/*' (default '*')"},
+            "subdir": {"type": "string", "description": "Optional subdirectory to scope the listing"},
+        },
+        "required": [],
+    },
+}
+
+_GREP_CODE_TOOL = {
+    "name": "grep_code",
+    "description": (
+        "Search project files for a regex to localize a bug, symbol, or failing test. "
+        "Returns 'path:line: text' matches, bounded."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "pattern": {"type": "string", "description": "Regular expression to search for"},
+            "subdir": {"type": "string", "description": "Optional subdirectory to scope the search"},
+            "glob": {"type": "string", "description": "Optional filename glob filter, e.g. '*.py'"},
+        },
+        "required": ["pattern"],
+    },
+}
+
+_READ_TOOLS = [_READ_FILE_TOOL, _LIST_FILES_TOOL, _GREP_CODE_TOOL]
+
 
 _SCOPE_LOCK_NOTE = (
     "\n\nScope lock: do exactly this task — no more. If you find anything outside its scope "
@@ -702,6 +753,27 @@ class BaseAgent(ABC):
             "Proceed with your stated assumption, clearly labeled in the work, and continue."
         )
 
+    async def _read_file_handler(self, tool_input: dict) -> str:
+        path = (tool_input.get("path") or "").strip()
+        if not path:
+            return "Ignored: read_file needs a path."
+        offset = tool_input.get("offset", 0) or 0
+        limit = tool_input.get("limit", 400) or 400
+        return await self.artifacts.read_paginated(path, offset, limit)
+
+    async def _list_files_handler(self, tool_input: dict) -> str:
+        pattern = (tool_input.get("pattern") or "*").strip() or "*"
+        subdir = (tool_input.get("subdir") or "").strip()
+        return self.artifacts.glob_files(pattern, subdir)
+
+    async def _grep_code_handler(self, tool_input: dict) -> str:
+        pattern = (tool_input.get("pattern") or "").strip()
+        if not pattern:
+            return "Ignored: grep_code needs a pattern."
+        subdir = (tool_input.get("subdir") or "").strip()
+        glob = (tool_input.get("glob") or "*").strip() or "*"
+        return self.artifacts.grep(pattern, subdir, glob)
+
     async def run_tool_loop(
         self,
         user_message: str,
@@ -710,6 +782,7 @@ class BaseAgent(ABC):
         tools: list[dict] | None = None,
         max_steps: int = 16,
         scope_lock: bool = True,
+        read_tools: bool = False,
     ) -> dict[str, Any]:
         """Multi-turn agentic loop: call → execute tools → feed results back → repeat.
 
@@ -723,10 +796,20 @@ class BaseAgent(ABC):
         instruction are injected so the agent defers out-of-scope work instead of expanding
         the task. Pass ``scope_lock=False`` for agents that should not defer (e.g. the Reviewer).
 
+        When ``read_tools`` is true, ``read_file`` / ``list_files`` / ``grep_code`` are injected so
+        implementation agents can inspect existing code before patching (bug-find / refactor).
+
         Returns ``{"final_text", "tool_calls", "results", "steps", "stop"}``.
         """
         effective_tools = list(tools or [])
         handlers = dict(tool_handlers)
+        if read_tools:
+            for tool_def in _READ_TOOLS:
+                if not any(t.get("name") == tool_def["name"] for t in effective_tools):
+                    effective_tools.append(tool_def)
+            handlers.setdefault("read_file", self._read_file_handler)
+            handlers.setdefault("list_files", self._list_files_handler)
+            handlers.setdefault("grep_code", self._grep_code_handler)
         if scope_lock:
             if not any(t.get("name") == "log_known_gap" for t in effective_tools):
                 effective_tools.append(_LOG_KNOWN_GAP_TOOL)
@@ -808,6 +891,16 @@ class BaseAgent(ABC):
         self.console.log(
             f"[dim cyan]{self.role}[/dim cyan] tool loop: {len(all_calls)} calls, "
             f"{step + 1} steps ({stop})"
+        )
+        # Structured event for host assistants (no-op unless AGENTFORGE_JSON_LOG is set).
+        write_calls = sum(1 for name, _ in all_calls if name == "write_file")
+        emit(
+            "files_changed",
+            role=self.role,
+            count=write_calls,
+            tool_calls=len(all_calls),
+            steps=step + 1,
+            stop=stop,
         )
         return {
             "final_text": "\n".join(text_parts),

@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "AgentForge: debug (reproduce → fix → re-verify)",
+      "type": "shell",
+      "command": "uv run python main.py --preset debug --target-repo \"${workspaceFolder}\" --goal \"${input:goal}\"",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "AgentForge: test (add/refresh tests)",
+      "type": "shell",
+      "command": "uv run python main.py --preset test --target-repo \"${workspaceFolder}\" --goal \"${input:goal}\"",
+      "problemMatcher": []
+    },
+    {
+      "label": "AgentForge: harden (production readiness)",
+      "type": "shell",
+      "command": "uv run python main.py --preset harden --target-repo \"${workspaceFolder}\" --deploy-gate --strict-review --goal \"${input:goal}\"",
+      "problemMatcher": []
+    },
+    {
+      "label": "AgentForge: dry-run",
+      "type": "shell",
+      "command": "uv run python main.py --preset full --target-repo \"${workspaceFolder}\" --dry-run --goal \"${input:goal}\"",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "goal",
+      "type": "promptString",
+      "description": "AgentForge sprint goal (what should it do to this repo?)"
+    }
+  ]
+}

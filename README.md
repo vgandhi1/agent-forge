@@ -18,6 +18,9 @@ turns), an independent reviewer that reads the actual files (silence ≠ approva
 deferred Known-Gaps log, an escalation channel for ambiguity, and an optional deploy gate
 (verify → human sign-off → commit). Runs on **Anthropic** or local **Ollama**.
 
+> **Dual-agent contract:** AgentForge runs its **own** LLM pass. Your assistant should **not**
+> duplicate implementation work — only launch, monitor, and summarize.
+
 ## Environment & package manager (uv)
 
 1. **Install [uv](https://docs.astral.sh/uv/getting-started/installation/)** (handles the virtualenv + locked deps).
@@ -72,6 +75,25 @@ uv run python main.py --list-artifacts
 ```
 
 Presets: `full` (default), `intake`, `design`, `implement`, `test`, `ship`, `improve`.
+
+### Install globally / run from any repo
+
+Install the `agentforge` command once, then run it from inside **any** project — no cloning, no `cd`
+into AgentForge:
+
+```bash
+# from the agent-forge checkout (folder with main.py):
+uv tool install .      # or: pipx install .
+
+# then, from inside any other project directory:
+agentforge --preset debug --target-repo . --goal "Fix the failing finance tests"
+```
+
+`--target-repo .` operates on the current repo while AgentForge keeps its own `agentforge.db` and
+default `workspace/` **out** of that directory. Without `--target-repo`, an installed run sandboxes
+into **`~/.agentforge`** (override with `AGENTFORGE_HOME`, or `AGENTFORGE_ROOT` for an absolute
+path). Running from the AgentForge source checkout keeps the old behavior (ROOT = repo root). See
+**[USAGE.md](docs/USAGE.md)**.
 
 ### Quality gates (opt-in flags)
 
