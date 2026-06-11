@@ -212,9 +212,20 @@ automatically and renders typed progress.
 | `debug` | QA → backend → QA — reproduce → patch → re-verify a bug |
 | `fix` | Backend → QA — apply a known fix → verify |
 | `harden` | QA → backend → DevOps — audit → patch → production readiness |
+| `data` | PM → data engineer → QA — factory-data ingestion, contracts, ETL/ELT, quality |
+| `ml` | PM → data engineer → ML engineer → QA — data layer → features/model/eval/serving |
+| `factory` | PM → architect → data engineer → ML engineer → backend → QA → DevOps — full data & AI app |
 
 The `debug` / `fix` / `harden` presets are aimed at an **existing** repo — pair them with
 `--target-repo PATH` (section C above) so the workers read, patch, and verify the real code.
+
+The `data` / `ml` / `factory` presets add two domain personas for **factory system data & AI
+engineering** apps (predictive maintenance, anomaly detection, quality prediction):
+
+- **Data Engineer** — streaming + batch ingestion (OPC-UA / MQTT / MES / historian), explicit
+  data contracts, idempotent ETL/ELT pipelines, storage model, and data-quality validation.
+- **AI/ML Engineer** — feature engineering, baseline + model, time-ordered (leakage-free)
+  evaluation, and an input-validating inference path built on the Data Engineer's contracts.
 
 Examples:
 

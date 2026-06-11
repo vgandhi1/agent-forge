@@ -75,7 +75,9 @@ uv run python main.py --list-artifacts
 ```
 
 Presets: `full` (default), `intake`, `design`, `implement`, `test`, `ship`, `improve`, plus the
-existing-repo bug/hardening presets `debug`, `fix`, `harden` (pair with `--target-repo`).
+existing-repo bug/hardening presets `debug`, `fix`, `harden` (pair with `--target-repo`), and the
+factory data & AI engineering presets `data`, `ml`, `factory` (add Data Engineer + AI/ML Engineer
+personas for predictive-maintenance / anomaly-detection / quality-prediction apps).
 
 ### Install globally / run from any repo
 

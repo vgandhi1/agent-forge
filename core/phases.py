@@ -118,6 +118,77 @@ PHASE_PRESETS: dict[str, list[tuple[str, str]] | None] = {
             "(packaging, health checks, runbook)",
         ),
     ],
+    # --- Factory data & AI engineering presets ---
+    "data": [
+        (
+            "pm",
+            "Intake: capture the factory data goal as docs/requirements.md (sources, downstream "
+            "use cases, data quality and freshness requirements, acceptance criteria)",
+        ),
+        (
+            "data_engineer",
+            "Data layer: design and implement ingestion (streaming + batch), explicit data contracts, "
+            "idempotent ETL/ELT pipelines, the storage model, and data-quality validation",
+        ),
+        (
+            "qa",
+            "Verify the data layer: run the pipeline/validation tests and confirm bad rows are "
+            "quarantined; refresh reports/qa_report.md",
+        ),
+    ],
+    "ml": [
+        (
+            "pm",
+            "Intake: frame the industrial AI goal as docs/requirements.md (problem, success metric, "
+            "cost of a wrong prediction, acceptance criteria)",
+        ),
+        (
+            "data_engineer",
+            "Data layer: validated contracts + features feed for the model (sources, schema, quality)",
+        ),
+        (
+            "ml_engineer",
+            "ML layer: feature engineering, baseline + model, time-ordered evaluation, and an "
+            "input-validating inference path on top of the data contracts",
+        ),
+        (
+            "qa",
+            "Verify the ML layer: confirm evaluation reproducibility and that serving rejects malformed "
+            "input; refresh reports/qa_report.md",
+        ),
+    ],
+    # End-to-end factory data & AI engineering application lifecycle.
+    "factory": [
+        (
+            "pm",
+            "Intake & requirements for a factory data & AI application: docs/requirements.md "
+            "(personas, data sources, AI use cases, NFRs, acceptance criteria)",
+        ),
+        (
+            "architect",
+            "Architecture: docs/architecture.md (system design, data + serving topology, security, scale)",
+        ),
+        (
+            "data_engineer",
+            "Data layer: ingestion, contracts, ETL/ELT pipelines, storage model, data-quality validation",
+        ),
+        (
+            "ml_engineer",
+            "ML layer: features, baseline + model, time-ordered evaluation, input-validating inference",
+        ),
+        (
+            "backend",
+            "Application layer: API/service that exposes the data + model outputs to users",
+        ),
+        (
+            "qa",
+            "Feature testing: pytest suite + reports/qa_report.md across data, ML, and API layers",
+        ),
+        (
+            "devops",
+            "Production readiness: Dockerfile, compose, CI workflow, docs/deployment.md",
+        ),
+    ],
 }
 
-VALID_ROLES = ("pm", "architect", "backend", "qa", "devops")
+VALID_ROLES = ("pm", "architect", "backend", "qa", "devops", "data_engineer", "ml_engineer")

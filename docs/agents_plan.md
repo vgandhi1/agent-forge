@@ -30,6 +30,13 @@ Four core modules:
 | **Backend Developer** | Implements FastAPI app (models, schemas, routers, services) | `workspace/dailyease/` (20+ files) |
 | **QA Engineer** | Writes pytest suite, bug reports, QA analysis | `workspace/dailyease/tests/`, `workspace/reports/qa_report.md` |
 | **DevOps Engineer** | Writes Dockerfile, docker-compose, CI/CD pipeline, runbook | `workspace/dailyease/Dockerfile`, `.github/workflows/ci.yml`, `workspace/docs/deployment.md` |
+| **Data Engineer** *(factory presets)* | Builds factory-data ingestion (streaming + batch), data contracts/schemas, idempotent ETL/ELT pipelines, storage model, data-quality validation | `docs/data_engineering.md`, pipeline + contract modules under the code root |
+| **AI/ML Engineer** *(factory presets)* | Feature engineering (train+serve), baseline + model, time-ordered leakage-free evaluation, input-validating inference on the data contracts | `docs/ml_design.md`, feature/train/serve modules under the code root |
+
+> The Data Engineer and AI/ML Engineer run in the `data`, `ml`, and `factory` presets — for
+> building **factory system data & AI engineering** applications (predictive maintenance, anomaly
+> detection, quality prediction). They are profile-aware (`--target-repo`) and write under the
+> project's `app_root`.
 
 ### Communication Model
 ```
@@ -103,7 +110,7 @@ agents/
 │
 ├── core/
 │   ├── paths.py              # AGENTFORGE_ROOT / workspace / DB / --target-repo resolution
-│   ├── phases.py             # DEFAULT_PHASES + CLI presets (intake … debug/fix/harden)
+│   ├── phases.py             # DEFAULT_PHASES + CLI presets (intake … debug/fix/harden, data/ml/factory)
 │   ├── profile.py            # project profile: stack, app_root, test/verify_cmd
 │   ├── deploy.py             # deploy-gate verify smoke + guarded git commit
 │   ├── hooks.py              # optional per-phase pre/post guardrail hooks
@@ -120,7 +127,9 @@ agents/
 │   ├── architect.py          # ArchitectAgent: architecture design
 │   ├── backend_developer.py  # BackendDeveloperAgent: FastAPI implementation
 │   ├── qa_engineer.py        # QAEngineerAgent: tests + QA report
-│   └── devops_engineer.py    # DevOpsEngineerAgent: deployment configs
+│   ├── devops_engineer.py    # DevOpsEngineerAgent: deployment configs
+│   ├── data_engineer.py      # DataEngineerAgent: ingestion, contracts, ETL/ELT (factory presets)
+│   └── ml_engineer.py        # MLEngineerAgent: features, model, eval, serving (factory presets)
 │
 ├── workspace/                # All generated artifacts land here
 │   ├── docs/

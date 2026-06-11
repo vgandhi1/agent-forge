@@ -24,6 +24,7 @@ evals/
     full_pipeline_smoke.yaml   # full run -> handoff/<role>.md + core artifacts present
     reviewer_reject.yaml       # incomplete fixture -> expect reject verdict
     resume_checkpoint.yaml     # --resume skips completed phases
+    data_pipeline.yaml         # data preset -> docs/data_engineering.md contract sections
 ```
 
 Each scenario is a **declarative data file**: it describes the checks, it is not a live

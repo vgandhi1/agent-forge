@@ -121,6 +121,7 @@ Current scenarios:
 | `full_pipeline_smoke` | each phase leaves `handoff/<role>.md`; core artifacts present |
 | `reviewer_reject` | an incomplete fixture yields a structured **reject** verdict |
 | `resume_checkpoint` | `--resume` skips phases marked done in the checkpoint |
+| `data_pipeline` | `data` preset's `docs/data_engineering.md` carries the Data Engineer contract sections |
 
 ### Pass / fail metrics
 

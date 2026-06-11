@@ -28,7 +28,8 @@ greenfield `workspace/` sandbox.
 6. Context truncation → selective condensing — **[done]** — `condense_markdown` plus
    `doc_reference` (path-first: small digest + `read_file` pointer instead of large inlined blobs;
    `core/context.py`, wired into the backend worker)
-7. Personas over labels — **[partial]** — six named roles; further persona depth open
+7. Personas over labels — **[partial]** — eight named roles (PM, Architect, Backend, QA, DevOps,
+   Data Engineer, AI/ML Engineer) + Reviewer; further persona depth open
 8. File handoffs (`handoff/<role>.md` + checkpoint) — **[done]**
 9. Plan-before-build gate (`--plan-gate`) — **[done]**
 10. Escalation routing — **[done]** — recorded, surfaced at the deploy gate, and (with
@@ -62,6 +63,22 @@ greenfield `workspace/` sandbox.
   **[done]** — `core/events.py`; emitted by the Lead per phase/review; documented in
   `docs/running-with-ai-clis.md`. The Web UI parses these into typed progress
   (`web_ui._parse_event_line`; `tests/test_web_events.py`).
+
+## Factory data & AI engineering team
+
+- Two domain personas extend the org so AgentForge can build factory/industrial data & AI apps
+  (predictive maintenance, anomaly detection, quality prediction). **[done]**
+  - `data_engineer` — ingestion (streaming + batch), data contracts, idempotent ETL/ELT,
+    storage model, data-quality validation (`agents/data_engineer.py`).
+  - `ml_engineer` — feature engineering, baseline + model, leakage-free evaluation,
+    input-validating inference on the data contracts (`agents/ml_engineer.py`).
+  - Presets `data`, `ml`, `factory`; both roles profile-aware (`--target-repo`); wired into
+    `VALID_ROLES`, the Lead `assign_task` enum, `cli.agents_map`, `web_ui.AGENT_ROLES`, eval
+    `KNOWN_PRESETS`, and `agents/__init__.py` exports. Tests: `tests/test_factory_team.py`.
+  - Eval coverage: `data_pipeline` scenario + committed fixture (`evals/fixtures/data_pipeline/`)
+    grades the `data` preset's design-doc contract in CI (suite now 5/5).
+- Open: domain-specific verify profiles (e.g. a `factory` profile with a data/ML `verify_cmd`),
+  an `ml`-preset eval fixture, and a fixture-repo integration soak for `data`/`ml` (parallels A4).
 
 ## Per-phase guardrail hooks
 

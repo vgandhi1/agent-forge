@@ -26,7 +26,7 @@ _DELEGATION_TOOLS = [
             "properties": {
                 "agent": {
                     "type": "string",
-                    "enum": ["pm", "architect", "backend", "qa", "devops"],
+                    "enum": ["pm", "architect", "backend", "qa", "devops", "data_engineer", "ml_engineer"],
                     "description": "The agent to assign the task to",
                 },
                 "task_description": {

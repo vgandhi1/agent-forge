@@ -28,7 +28,7 @@ MAIN_PY = REPO_ROOT / "main.py"
 ALLOWED_PRESETS = frozenset(["full", *PHASE_PRESETS.keys()])
 MAX_GOAL_CHARS = 500_000
 
-AGENT_ROLES = ("lead", "pm", "architect", "backend", "qa", "devops")
+AGENT_ROLES = ("lead", "pm", "architect", "backend", "qa", "devops", "data_engineer", "ml_engineer")
 
 
 def _parse_event_line(text: str) -> dict | None:

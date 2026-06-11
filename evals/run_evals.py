@@ -56,6 +56,9 @@ KNOWN_PRESETS = {
     "debug",
     "fix",
     "harden",
+    "data",
+    "ml",
+    "factory",
 }
 
 

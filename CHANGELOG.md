@@ -2,6 +2,30 @@
 
 Document **user-visible** changes (CLI flags, behavior, public docs, breaking renames of user-facing concepts). **Skip** entries for internal-only refactors—e.g. module/symbol renames or log identifiers that do not change how users run AgentForge.
 
+## Unreleased — factory data & AI engineering team
+
+Adds two domain personas so AgentForge can build **factory system data & AI engineering**
+applications (predictive maintenance, anomaly detection, quality prediction). Additive and
+backward compatible — existing presets and roles are unchanged.
+
+- **Data Engineer persona (`data_engineer`):** streaming + batch ingestion (OPC-UA / MQTT /
+  MES / historian), explicit data contracts/schemas, idempotent ETL/ELT pipelines, storage
+  model, and data-quality validation that quarantines bad rows. (`agents/data_engineer.py`)
+- **AI/ML Engineer persona (`ml_engineer`):** feature engineering shared by train + serve,
+  baseline-first modeling, time-ordered (leakage-free) evaluation, and an input-validating
+  inference path on top of the Data Engineer's contracts. (`agents/ml_engineer.py`)
+- **New presets:** `data` (PM → data engineer → QA), `ml` (PM → data engineer → ML engineer →
+  QA), and `factory` — the full data & AI app lifecycle (PM → architect → data engineer → ML
+  engineer → backend → QA → DevOps). Both roles are profile-aware (`--target-repo`) and write
+  under the project's `app_root`.
+- **Tests:** unit suite grows from 143 to 153 (`tests/test_factory_team.py` — preset
+  sequences, role/prompt consistency, profile-aware build prompts). `KNOWN_PRESETS` recognizes
+  `data` / `ml` / `factory`.
+- **Eval coverage:** new `data_pipeline` scenario + committed fixture tree grades the `data`
+  preset's `docs/data_engineering.md` contract sections in CI (eval suite now 5/5).
+- **Exports & docs:** `agents/__init__.py` exports `DataEngineerAgent` / `MLEngineerAgent`;
+  `docs/agents_plan.md` roster + directory tree updated for the factory team.
+
 ## Unreleased — operator soak & eval hardening (P1 + P2)
 
 Follow-through on the `feedback.md` P1/P2 action plan. All additive and backward compatible.
