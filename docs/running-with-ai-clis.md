@@ -205,4 +205,21 @@ assistant to tail stderr JSON when summarizing a run.
   `--resume` continues where it stopped.
 - **Gates are opt-in** (`--deploy-gate`, `--plan-gate`, `--resume`); default off keeps runs fully autonomous.
 
+---
+
+## Cost & billing (orchestrator vs launcher)
+
+Your assistant and AgentForge are **two separate LLM consumers** — they bill independently:
+
+| Consumer | Role | Billed |
+|----------|------|--------|
+| Your assistant (Claude Code / Cursor / Codex) | **Launcher** — fires the command, monitors, summarizes | Your assistant's own plan: a Claude/Cursor **subscription** (counts against its limits, no per-token charge), or that tool's **API** auth (per-token). |
+| AgentForge | **Orchestrator** — runs the multi-agent build with its own model | The `ANTHROPIC_API_KEY` in `.env` (or env) → **pay-as-you-go per token** on that Anthropic Console account. With Ollama, **$0** (local). |
+
+Key points:
+- **AgentForge is the cost driver.** A `full`/`factory` run is many phases × (generate + independent review) × per-role models — far more tokens than the launcher, which only reads a summary.
+- The two meters are separate even if the same person owns both. The launcher's subscription does **not** pay for AgentForge's API tokens.
+- **Don't let the launcher duplicate the build** (dual-agent contract). If the assistant "becomes" AgentForge and writes the code itself, you pay twice and burn its context.
+- **Cut cost:** `--dry-run` (free, no calls) · Ollama provider (local, $0, see [ollama.md](ollama.md)) · per-role model overrides (downgrade non-critical roles) · staged presets (`intake`→`design`→…) instead of one big `full`/`factory`.
+
 See also: [USAGE.md](USAGE.md) · [ollama.md](ollama.md) · [agents_plan.md](agents_plan.md).

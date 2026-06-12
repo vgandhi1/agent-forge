@@ -25,6 +25,14 @@ backward compatible — existing presets and roles are unchanged.
   preset's `docs/data_engineering.md` contract sections in CI (eval suite now 5/5).
 - **Exports & docs:** `agents/__init__.py` exports `DataEngineerAgent` / `MLEngineerAgent`;
   `docs/agents_plan.md` roster + directory tree updated for the factory team.
+- **Slash commands for every preset:** added `/agentforge-debug`, `-fix`, `-harden`, `-data`,
+  `-ml`, and `-factory` under `.claude/commands/` so all presets are reachable from chat, not
+  just the CLI. The chat-pluggable table, `AGENTS.md`, and the Cursor rule now list the full
+  preset set. (`docs/running-with-ai-clis.md`, `AGENTS.md`, `.cursor/rules/agentforge.md`)
+- **Global install documented:** `docs/running-with-ai-clis.md` now gives the correct recipe for
+  using the slash commands in **every** project — `uv tool install .` for the `agentforge`
+  binary, then rewrite the global command copies to call it — plus a Cost & billing section
+  (launcher vs orchestrator metering).
 
 ## Unreleased — operator soak & eval hardening (P1 + P2)
 
