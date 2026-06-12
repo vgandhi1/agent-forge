@@ -30,6 +30,9 @@ uv run python main.py --preset <preset> --target-repo <abs-repo-path> --goal "<t
 | `fix` | backend → qa | Apply a known fix |
 | `harden` | qa → backend → devops | Production readiness on an existing app |
 | `full` | pm → architect → backend → qa → devops | Greenfield lifecycle |
+| `data` | pm → data_engineer → qa | Factory **data layer**: ingestion, data contracts, ETL/ELT, quality validation |
+| `ml` | pm → data_engineer → ml_engineer → qa | Industrial **ML layer**: features, baseline + model, time-ordered eval, validated inference |
+| `factory` | pm → architect → data_engineer → ml_engineer → backend → qa → devops | End-to-end factory **data + AI** application lifecycle |
 
 ## Flags worth knowing
 
