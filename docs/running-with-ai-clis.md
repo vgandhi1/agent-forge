@@ -55,6 +55,12 @@ type the command, pass the goal as the argument:
 | `/agentforge-test <goal>` | QA tests + pytest | `--preset test` |
 | `/agentforge-ship <goal>` | Docker/CI/runbook (DevOps) | `--preset ship` |
 | `/agentforge-improve <goal>` | Refactor + re-verify | `--preset improve` |
+| `/agentforge-debug <goal>` | Reproduce → patch → re-verify a bug (+ regression test) | `--preset debug` |
+| `/agentforge-fix <goal>` | Apply a known fix + covering test | `--preset fix` |
+| `/agentforge-harden <goal>` | Production-readiness pass (audit → patch → ops) | `--preset harden` |
+| `/agentforge-data <goal>` | Factory data layer: ingestion, contracts, ETL, quality | `--preset data` |
+| `/agentforge-ml <goal>` | Industrial ML layer: features, model, eval, inference | `--preset ml` |
+| `/agentforge-factory <goal>` | End-to-end data + AI app lifecycle | `--preset factory` |
 | `/agentforge-resume <goal>` | Skip completed phases for the same goal | `--resume` |
 | `/agentforge-artifacts` | List generated files | `--list-artifacts` |
 | `/agentforge-dry-run [goal]` | Show config, no API calls | `--dry-run` |
