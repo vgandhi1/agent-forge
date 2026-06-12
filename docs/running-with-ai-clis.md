@@ -93,7 +93,40 @@ The mapping is 1:1, so the slash commands double as a copy-paste cheatsheet for 
   `uv run python main.py …` commands. Nothing AgentForge-specific to configure.
 
 ### Plain terminal (no assistant)
-- Everything above works directly in a shell; the assistant is only a convenience for issuing commands.
+
+The assistant is only a convenience for typing commands — AgentForge needs no AI tool to run.
+Open a terminal in the repo root (the folder with `main.py`) and invoke it yourself:
+
+```bash
+# One-time: install deps
+uv sync                                   # or: pip install -r requirements.txt
+
+# Dry-run (no API calls) — prints provider, models, gates, goal
+uv run python main.py --dry-run
+
+# Operate on the repo you have open
+uv run python main.py --preset debug --target-repo . --goal "Fix the failing auth test"
+
+# Greenfield run in the workspace/ sandbox
+uv run python main.py --preset full --goal "Build a habit-tracking API"
+```
+
+Installed globally (`uv tool install .` or `pipx install .`), drop the `uv run python main.py`
+prefix and call `agentforge …` from any directory. Full flag list: [USAGE.md](USAGE.md).
+
+### VS Code (Tasks — no assistant, no extension)
+
+AgentForge ships `.vscode/tasks.json`, so you can run it from VS Code's UI without Copilot or any
+chat extension:
+
+1. Open the agent-forge folder (or your target repo) in VS Code.
+2. **Command Palette** (`Ctrl/Cmd+Shift+P`) → **Tasks: Run Task**.
+3. Pick a task — **AgentForge: debug / test / harden / dry-run**.
+4. Type the sprint **goal** at the prompt; output streams in a dedicated terminal panel.
+
+The bundled tasks pass `--target-repo "${workspaceFolder}"`, so they act on whatever folder you
+have open. Edit `.vscode/tasks.json` to add presets or flags (e.g. `--strict-review`). Requires
+`uv` on `PATH` and `ANTHROPIC_API_KEY` in `.env` (or an Ollama setup).
 
 ---
 

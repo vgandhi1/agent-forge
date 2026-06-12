@@ -132,7 +132,7 @@ Missing packages → run `uv sync` (or `pip install -r requirements.txt`). API e
 ## Full instructions
 
 - **[docs/USAGE.md](docs/USAGE.md)** — CLI, TUI, web UI, presets, gate flags, pip fallback, troubleshooting  
-- **[docs/running-with-ai-clis.md](docs/running-with-ai-clis.md)** — drive AgentForge from any AI coding assistant (Claude Code, Cursor, Codex, …)  
+- **[docs/running-with-ai-clis.md](docs/running-with-ai-clis.md)** — drive AgentForge from any AI coding assistant (Claude Code, Cursor, Codex, …), **or with no assistant** from a plain terminal or VS Code Tasks  
 - **[docs/ollama.md](docs/ollama.md)** — run on local models; Windows-Ollama + WSL setup, model choice, diagnostics  
 - **[docs/agents_plan.md](docs/agents_plan.md)** — architecture, env var table, deployment phases  
 - **[docs/github-repository.md](docs/github-repository.md)** — GitHub description, topics, `gh repo create`, public vs private  
