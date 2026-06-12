@@ -2,6 +2,63 @@
 
 Document **user-visible** changes (CLI flags, behavior, public docs, breaking renames of user-facing concepts). **Skip** entries for internal-only refactors—e.g. module/symbol renames or log identifiers that do not change how users run AgentForge.
 
+## Unreleased — factory data & AI engineering team
+
+Adds two domain personas so AgentForge can build **factory system data & AI engineering**
+applications (predictive maintenance, anomaly detection, quality prediction). Additive and
+backward compatible — existing presets and roles are unchanged.
+
+- **Data Engineer persona (`data_engineer`):** streaming + batch ingestion (OPC-UA / MQTT /
+  MES / historian), explicit data contracts/schemas, idempotent ETL/ELT pipelines, storage
+  model, and data-quality validation that quarantines bad rows. (`agents/data_engineer.py`)
+- **AI/ML Engineer persona (`ml_engineer`):** feature engineering shared by train + serve,
+  baseline-first modeling, time-ordered (leakage-free) evaluation, and an input-validating
+  inference path on top of the Data Engineer's contracts. (`agents/ml_engineer.py`)
+- **New presets:** `data` (PM → data engineer → QA), `ml` (PM → data engineer → ML engineer →
+  QA), and `factory` — the full data & AI app lifecycle (PM → architect → data engineer → ML
+  engineer → backend → QA → DevOps). Both roles are profile-aware (`--target-repo`) and write
+  under the project's `app_root`.
+- **Tests:** unit suite grows from 143 to 153 (`tests/test_factory_team.py` — preset
+  sequences, role/prompt consistency, profile-aware build prompts). `KNOWN_PRESETS` recognizes
+  `data` / `ml` / `factory`.
+- **Eval coverage:** new `data_pipeline` scenario + committed fixture tree grades the `data`
+  preset's `docs/data_engineering.md` contract sections in CI (eval suite now 5/5).
+- **Exports & docs:** `agents/__init__.py` exports `DataEngineerAgent` / `MLEngineerAgent`;
+  `docs/agents_plan.md` roster + directory tree updated for the factory team.
+
+## Unreleased — operator soak & eval hardening (P1 + P2)
+
+Follow-through on the `feedback.md` P1/P2 action plan. All additive and backward compatible.
+
+- **Per-phase guardrail hooks:** drop an executable at `.agentforge/hooks/pre-phase` or
+  `.agentforge/hooks/post-phase` and AgentForge runs it around every phase, with
+  `AGENTFORGE_PHASE_ROLE` and `AGENTFORGE_HOOK_STAGE` in the environment — for a lint or
+  pytest smoke without waiting for the deploy gate. Opt-in by presence and advisory: a
+  non-zero exit is surfaced but does not abort the sprint. (`core/hooks.py`)
+- **Mid-sprint escalation pause:** with `--deploy-gate`, when a phase escalates an ambiguous
+  decision the Lead now invites operator guidance mid-sprint (recorded for the team) instead
+  of only surfacing it at the deploy gate. Without a TTY it records nothing and continues, so
+  unattended runs never block.
+- **Web UI typed progress:** the browser UI launches the run with `AGENTFORGE_JSON_LOG=1` and
+  parses the JSON events on stderr (`phase_complete`, `review_verdict`, `files_changed`, …)
+  into structured `event` messages, instead of streaming only raw log lines. The Lead now
+  emits `phase_complete` and `review_verdict` events per phase.
+- **Deterministic eval grading:** scenarios with an artifact contract commit a fixture tree
+  under `evals/fixtures/` and reference it with a `fixture:` key, so `evals/run_evals.py`
+  grades the real artifact/section contract in CI without a live run. `--workspace` still
+  overrides to grade a produced run. CI now runs the eval suite after the unit tests, and
+  `KNOWN_PRESETS` recognizes `debug` / `fix` / `harden`.
+- **Eval path fix:** `intake_requirements` now grades `docs/requirements.md` (the path runs
+  actually produce), not `requirements.md`.
+- **Debug-preset integration test:** a committed fixture repo with a known failing test
+  (`tests/fixtures/broken_calc/`) verifies the reproduce → patch → re-verify loop against a
+  real `verify_cmd` (`tests/test_debug_integration.py`).
+- **Docs:** `docs/evaluation.md` steps 2, 7, 8, 9 refreshed (hooks shipped, fixtures, CI eval,
+  `AGENTS.md` present, target-repo shipped); `README.md` links `docs/evaluation.md` and
+  `evals/README.md`; `improvement.md` synced (escalation done, hooks, eval fixtures).
+- **Tests:** unit suite grows from 126 to 143 (hooks, escalation pause, Web UI event parsing,
+  debug integration).
+
 ## Planned / Unreleased — Phase C (deferred)
 
 Held until there is a clear need; see `improvement.md` and `feedback.md` for rationale ("defer until A+B").

@@ -12,7 +12,8 @@ from core.artifact_store import ArtifactStore
 from core.phases import DEFAULT_PHASES
 from core.paths import METADATA_ROOT
 from core.profile import load_profile, DEFAULT_PROFILE
-from core import deploy, handoff
+from core import deploy, handoff, hooks
+from core.events import emit
 from .base_agent import BaseAgent
 from .reviewer import ReviewerAgent
 
@@ -25,7 +26,7 @@ _DELEGATION_TOOLS = [
             "properties": {
                 "agent": {
                     "type": "string",
-                    "enum": ["pm", "architect", "backend", "qa", "devops"],
+                    "enum": ["pm", "architect", "backend", "qa", "devops", "data_engineer", "ml_engineer"],
                     "description": "The agent to assign the task to",
                 },
                 "task_description": {
@@ -104,9 +105,13 @@ class LeadAgent(BaseAgent):
         self._last_review_summary: str = ""
         # PR-workflow branch for --deploy-commit (set by run_development_cycle); None = current branch.
         self._deploy_branch: str | None = None
+        # Set when --deploy-gate is on; gates the mid-sprint escalation pause.
+        self._deploy_gate: bool = False
         # Deploy gate hooks — overridable in tests. Defaults do real I/O.
         self._approval_fn = self._default_approval
         self._verify_fn = self._default_verify
+        # Mid-sprint escalation pause — overridable in tests. Default prompts on a TTY.
+        self._escalation_pause_fn = self._default_escalation_pause
 
     async def run(self) -> None:
         pass  # Lead is driven by run_development_cycle, not the message loop
@@ -126,6 +131,7 @@ class LeadAgent(BaseAgent):
     ) -> None:
         self._plan_gate = plan_gate
         self._deploy_branch = deploy_branch
+        self._deploy_gate = deploy_gate
         phase_list = phases if phases is not None else DEFAULT_PHASES
         self.console.print(Panel(
             f"[bold]Sprint Goal:[/bold]\n{goal.strip()}",
@@ -171,6 +177,8 @@ class LeadAgent(BaseAgent):
     async def _run_phase(self, agent_role: str, phase_description: str, goal: str) -> None:
         self.console.rule(f"[bold yellow]Phase: {agent_role.upper()}[/bold yellow]")
         _lead_log.info("phase_start role=%s", agent_role)
+
+        await self._run_phase_hook("pre-phase", agent_role)
 
         context = await self._build_dynamic_context()
         context += f"\n\n## Sprint Goal\n{goal}"
@@ -233,8 +241,7 @@ class LeadAgent(BaseAgent):
                 break
 
             if result_msg.type == MessageType.ESCALATION:
-                q = result_msg.payload.get("question", "")
-                self.console.log(f"[magenta]Escalation from {agent_role}:[/magenta] {q[:80]}")
+                await self._handle_escalation(agent_role, result_msg)
                 continue  # already recorded by the agent; will surface at the deploy gate
 
             if result_msg.type != MessageType.TASK_COMPLETE:
@@ -298,6 +305,65 @@ class LeadAgent(BaseAgent):
             review_summary=self._last_review_summary,
         )
 
+        # Typed progress for host assistants / Web UI (no-op unless AGENTFORGE_JSON_LOG is set).
+        emit("phase_complete", phase=agent_role, role=agent_role, artifact=path)
+
+        await self._run_phase_hook("post-phase", agent_role)
+
+    async def _run_phase_hook(self, stage: str, agent_role: str) -> None:
+        """Run an optional project guardrail hook around a phase (advisory, never fatal)."""
+        code_root = self.artifacts.WORKSPACE
+        status, detail = await hooks.run_phase_hook(
+            stage, agent_role, metadata_root=METADATA_ROOT, code_root=code_root
+        )
+        if status == "skipped":
+            return
+        if status == "ok":
+            self.console.log(f"[green]{stage} hook ok ({agent_role})[/green]")
+            _lead_log.info("phase_hook stage=%s role=%s status=ok", stage, agent_role)
+        else:
+            self.console.log(
+                f"[yellow]{stage} hook failed ({agent_role}) — advisory, continuing[/yellow]"
+            )
+            _lead_log.warning(
+                "phase_hook stage=%s role=%s status=fail detail=%s",
+                stage, agent_role, detail.strip()[-200:],
+            )
+
+    async def _handle_escalation(self, agent_role: str, msg: Message) -> None:
+        """Surface a mid-sprint escalation; pause for the operator when the deploy gate is on.
+
+        The escalation is already recorded by the agent and will also appear in the deploy
+        summary. When ``--deploy-gate`` is active we additionally give the operator a chance
+        to intervene mid-sprint (recorded as guidance) instead of only at the end.
+        """
+        question = msg.payload.get("question", "")
+        self.console.log(f"[magenta]Escalation from {agent_role}:[/magenta] {question[:80]}")
+        if self._deploy_gate:
+            await self._escalation_pause_fn(agent_role, question)
+
+    async def _default_escalation_pause(self, agent_role: str, question: str) -> None:
+        """Interactive mid-sprint pause. Without a TTY, record and continue (no deadlock)."""
+        if not sys.stdin.isatty():
+            self.console.log(
+                "[dim]Escalation noted (no interactive terminal) — will surface at the deploy gate.[/dim]"
+            )
+            return
+        self.console.print(Panel(
+            Text(
+                f"{agent_role} escalated a decision:\n\n{question}\n\n"
+                "Enter guidance for the team, or press Enter to defer to the deploy gate.",
+                style="bold magenta",
+            ),
+            title="[bold magenta]Escalation — sprint paused[/bold magenta]",
+            border_style="magenta",
+        ))
+        loop = asyncio.get_event_loop()
+        answer = await loop.run_in_executor(None, lambda: input("Guidance (or Enter): ").strip())
+        if answer:
+            await self.memory.remember(f"escalation_guidance_{agent_role}", answer, "decision")
+            self.console.log(f"[cyan]Recorded guidance for {agent_role}.[/cyan]")
+
     async def _review_artifact(self, agent_role: str, artifact: dict, attempt: int) -> bool:
         """Consult the independent Reviewer and act on its verdict.
 
@@ -327,6 +393,8 @@ class LeadAgent(BaseAgent):
         should_fix = verdict.get("should_fix") or []
         review_summary = verdict.get("summary", "")
         self._last_review_summary = review_summary
+        # Typed progress for host assistants / Web UI (no-op unless AGENTFORGE_JSON_LOG is set).
+        emit("review_verdict", role=agent_role, decision=decision, attempt=attempt + 1)
 
         if decision == "approve":
             await self.bus.publish(Message(

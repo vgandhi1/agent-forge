@@ -35,6 +35,9 @@ testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# Committed fixture repos under tests/fixtures/ contain their own test_*.py used by
+# integration tests (run via a separate pytest subprocess); don't collect them here.
+norecursedirs = ["fixtures", "*.egg", ".*", "build", "dist"]
 
 [tool.setuptools]
 packages = ["core", "agents"]

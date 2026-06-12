@@ -183,6 +183,8 @@ async def _run_cycle(
     from agents.backend_developer import BackendDeveloperAgent
     from agents.qa_engineer import QAEngineerAgent
     from agents.devops_engineer import DevOpsEngineerAgent
+    from agents.data_engineer import DataEngineerAgent
+    from agents.ml_engineer import MLEngineerAgent
     from core.message_types import Message, MessageType
 
     await init_db()
@@ -197,6 +199,8 @@ async def _run_cycle(
         "backend": BackendDeveloperAgent("backend", bus, store, console),
         "qa": QAEngineerAgent("qa", bus, store, console),
         "devops": DevOpsEngineerAgent("devops", bus, store, console),
+        "data_engineer": DataEngineerAgent("data_engineer", bus, store, console),
+        "ml_engineer": MLEngineerAgent("ml_engineer", bus, store, console),
     }
 
     worker_tasks = [
@@ -218,7 +222,7 @@ async def _run_cycle(
             strict_review=strict_review,
         )
     finally:
-        for role in ["pm", "architect", "backend", "qa", "devops"]:
+        for role in [r for r in agents_map if r != "lead"]:
             await bus.publish(Message(
                 type=MessageType.SHUTDOWN,
                 sender="lead",
@@ -403,7 +407,8 @@ def main() -> None:
         provider = llm_provider()
         thinking = os.getenv("AGENTFORGE_THINKING", "false")
         phase_desc = "default (full pipeline)" if phases is None else str([p[0] for p in phases])
-        roles = ("lead", "pm", "architect", "backend", "qa", "devops", "reviewer")
+        roles = ("lead", "pm", "architect", "backend", "qa", "devops",
+                 "data_engineer", "ml_engineer", "reviewer")
         if provider == "ollama":
             try:
                 ohost = validate_ollama_base_url(os.getenv("AGENTFORGE_OLLAMA_HOST", "http://127.0.0.1:11434"))

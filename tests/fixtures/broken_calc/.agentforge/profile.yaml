@@ -1,0 +1,5 @@
+name: broken_calc
+stack: [python, pytest]
+app_root: .
+test_cmd: [pytest, -q]
+verify_cmd: [pytest, -q]

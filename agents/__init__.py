@@ -4,6 +4,8 @@ from .architect import ArchitectAgent
 from .backend_developer import BackendDeveloperAgent
 from .qa_engineer import QAEngineerAgent
 from .devops_engineer import DevOpsEngineerAgent
+from .data_engineer import DataEngineerAgent
+from .ml_engineer import MLEngineerAgent
 from .reviewer import ReviewerAgent
 
 __all__ = [
@@ -13,5 +15,7 @@ __all__ = [
     "BackendDeveloperAgent",
     "QAEngineerAgent",
     "DevOpsEngineerAgent",
+    "DataEngineerAgent",
+    "MLEngineerAgent",
     "ReviewerAgent",
 ]

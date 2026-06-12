@@ -28,4 +28,6 @@ expected_artifacts:
   - handoff/checkpoint.json
 expected_sections: {}
 expected_verdict: null
+# Committed tree graded deterministically when no --workspace is given.
+fixture: fixtures/resume_checkpoint
 live: false

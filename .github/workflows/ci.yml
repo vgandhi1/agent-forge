@@ -21,3 +21,6 @@ jobs:
         run: |
           uv sync --group dev
           uv run pytest tests/ -q
+
+      - name: Validate eval scenarios
+        run: uv run python evals/run_evals.py

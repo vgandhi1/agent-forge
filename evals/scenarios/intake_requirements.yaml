@@ -12,10 +12,10 @@ preset: intake
 goal: "Capture requirements for a reminders module"
 # Files that must exist under the workspace after a real run.
 expected_artifacts:
-  - requirements.md
+  - docs/requirements.md
 # Markdown headings/sections that must appear in the requirements doc.
 expected_sections:
-  requirements.md:
+  docs/requirements.md:
     - "Executive Summary"
     - "Target Users"
     - "Problem Statement"
@@ -26,5 +26,7 @@ expected_sections:
     - "Out of Scope"
 # No reviewer verdict asserted for this scenario.
 expected_verdict: null
+# Committed tree graded deterministically when no --workspace is given.
+fixture: fixtures/intake_requirements
 # Live LLM execution is deferred; fixture/structural checks run today.
 live: false

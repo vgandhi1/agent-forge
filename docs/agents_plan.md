@@ -30,6 +30,13 @@ Four core modules:
 | **Backend Developer** | Implements FastAPI app (models, schemas, routers, services) | `workspace/dailyease/` (20+ files) |
 | **QA Engineer** | Writes pytest suite, bug reports, QA analysis | `workspace/dailyease/tests/`, `workspace/reports/qa_report.md` |
 | **DevOps Engineer** | Writes Dockerfile, docker-compose, CI/CD pipeline, runbook | `workspace/dailyease/Dockerfile`, `.github/workflows/ci.yml`, `workspace/docs/deployment.md` |
+| **Data Engineer** *(factory presets)* | Builds factory-data ingestion (streaming + batch), data contracts/schemas, idempotent ETL/ELT pipelines, storage model, data-quality validation | `docs/data_engineering.md`, pipeline + contract modules under the code root |
+| **AI/ML Engineer** *(factory presets)* | Feature engineering (train+serve), baseline + model, time-ordered leakage-free evaluation, input-validating inference on the data contracts | `docs/ml_design.md`, feature/train/serve modules under the code root |
+
+> The Data Engineer and AI/ML Engineer run in the `data`, `ml`, and `factory` presets — for
+> building **factory system data & AI engineering** applications (predictive maintenance, anomaly
+> detection, quality prediction). They are profile-aware (`--target-repo`) and write under the
+> project's `app_root`.
 
 ### Communication Model
 ```
@@ -83,24 +90,31 @@ agents/
 ├── cli.py                    # argparse: presets, phases, dry-run, TUI flag
 ├── tui_main.py               # Textual TUI (buttons + streamed subprocess logs)
 ├── web_ui.py                 # Local browser UI (FastAPI + WebSocket, loopback)
-├── tests/                    # pytest (CLI, artifact_store, message_bus, gates)
+├── tests/                    # pytest (CLI, artifact_store, message_bus, gates, hooks)
+├── evals/                    # agent evals: fixture-graded pipeline contracts + run_evals.py
+├── AGENTS.md                 # generic host-assistant snippet (Codex/Aider/…)
 ├── pyproject.toml            # dependencies + [tool.uv]; `agentforge` script
 ├── uv.lock                   # locked versions for `uv sync`
 ├── requirements.txt          # pip mirror of deps (optional if using uv)
 ├── README.md                 # uv + env quickstart; CI badge; doc index
 ├── LICENSE                   # MIT
-├── .github/workflows/ci.yml  # pytest on push / PR
+├── .github/workflows/ci.yml  # pytest + evals/run_evals.py on push / PR
 ├── .env.example              # config template (copy to `.env`)
 ├── docs/
 │   ├── USAGE.md              # Step-by-step: CLI, TUI, web UI, presets, gate flags
 │   ├── running-with-ai-clis.md  # drive AgentForge from any AI coding assistant
+│   ├── evaluation.md         # 9-step quality roadmap mapped to AgentForge
 │   ├── ollama.md             # local models; Windows-Ollama + WSL setup
 │   ├── agents_plan.md        # this file
 │   └── github-repository.md  # GitHub repo metadata
 │
 ├── core/
-│   ├── paths.py              # AGENTFORGE_ROOT / workspace / DB resolution
-│   ├── phases.py             # DEFAULT_PHASES + CLI presets (intake, test, improve, …)
+│   ├── paths.py              # AGENTFORGE_ROOT / workspace / DB / --target-repo resolution
+│   ├── phases.py             # DEFAULT_PHASES + CLI presets (intake … debug/fix/harden, data/ml/factory)
+│   ├── profile.py            # project profile: stack, app_root, test/verify_cmd
+│   ├── deploy.py             # deploy-gate verify smoke + guarded git commit
+│   ├── hooks.py              # optional per-phase pre/post guardrail hooks
+│   ├── events.py             # AGENTFORGE_JSON_LOG structured event emitter
 │   ├── message_types.py      # Message dataclass + MessageType enum
 │   ├── message_bus.py        # asyncio.PriorityQueue-based message bus
 │   ├── memory.py             # aiosqlite persistent memory (per-role scoped)
@@ -113,7 +127,9 @@ agents/
 │   ├── architect.py          # ArchitectAgent: architecture design
 │   ├── backend_developer.py  # BackendDeveloperAgent: FastAPI implementation
 │   ├── qa_engineer.py        # QAEngineerAgent: tests + QA report
-│   └── devops_engineer.py    # DevOpsEngineerAgent: deployment configs
+│   ├── devops_engineer.py    # DevOpsEngineerAgent: deployment configs
+│   ├── data_engineer.py      # DataEngineerAgent: ingestion, contracts, ETL/ELT (factory presets)
+│   └── ml_engineer.py        # MLEngineerAgent: features, model, eval, serving (factory presets)
 │
 ├── workspace/                # All generated artifacts land here
 │   ├── docs/
@@ -225,7 +241,7 @@ With **uv**, prefix commands with `uv run` (examples below show both forms).
 python main.py
 # uv run python main.py
 
-# Workflow presets (intake, design, implement, test, ship, improve, full)
+# Workflow presets (intake, design, implement, test, ship, improve, full, debug, fix, harden)
 python main.py --preset intake --goal "Capture requirements for reminders v2"
 python main.py --preset test --goal "Expand API tests for finance module"
 python main.py --preset improve --goal "Reduce DB round-trips and add indexes"
@@ -303,12 +319,17 @@ echo "AGENTFORGE_THINKING=true" >> .env
 - [x] `message_log` persistence on publish; CLI `--goal-file` validation; `--verbose` / `--log-file`
 - [x] Anthropic retries (rate limit, timeout, connection, 5xx); TUI cancel (`c`); web UI error `code`s
 - [x] Unit tests for CLI phases, artifact paths, message bus (`tests/` + `uv sync --group dev`)
+- [x] Universal operator: `--target-repo`, project profiles, worker read/grep tools, `debug`/`fix`/`harden` presets
+- [x] Quality gates: independent Reviewer, deploy gate, scope lock, plan-gate, `--strict-review`, `--resume`, mid-sprint escalation pause
+- [x] Structured `AGENTFORGE_JSON_LOG` events; Web UI parses them into typed progress
+- [x] Optional per-phase guardrail hooks (`.agentforge/hooks/pre-phase` / `post-phase`)
+- [x] Agent eval suite (`evals/`, fixture-graded) + `docs/evaluation.md`; CI runs `run_evals.py`
 
 ### Phase 2 — Product Quality
-- [ ] Add web search tool so agents can look up latest API docs
+- [ ] Add web search tool so agents can look up latest API docs  *(deferred — Phase C; see `feedback.md` Part 8)*
 - [x] Run pytest from QA agent (local subprocess, capped output)
 - [ ] Multi-sprint support: agents remember prior sprint decisions
-- [ ] Parallel agent execution where phases allow (e.g., docs + tests in parallel)
+- [ ] Parallel agent execution where phases allow (e.g., docs + tests in parallel)  *(deferred — Phase C; needs workspace locking)*
 
 ### Phase 3 — Scale
 - [ ] Kubernetes deployment of the multi-agent system itself

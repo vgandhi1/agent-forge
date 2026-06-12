@@ -1,0 +1,28 @@
+# Eval scenario: the data preset turns a factory-data goal into a data engineering
+# design doc with the sections the Data Engineer persona is contracted to produce.
+#
+# DATA file. run_evals.py checks the structural contract and (with --workspace or the
+# committed fixture) the declared artifacts/sections.
+name: data_pipeline
+description: >
+  Running --preset data on a factory-data goal produces docs/data_engineering.md
+  containing the mandatory Data Engineer sections (contracts, pipeline, quality).
+preset: data
+goal: "Ingest CNC press-line telemetry for downstream predictive maintenance"
+# Files that must exist under the workspace after a real run.
+expected_artifacts:
+  - docs/data_engineering.md
+# Markdown headings/sections that must appear in the design doc.
+expected_sections:
+  docs/data_engineering.md:
+    - "Sources"
+    - "Data Contracts"
+    - "Pipeline"
+    - "Storage Model"
+    - "Data Quality"
+# No reviewer verdict asserted for this scenario.
+expected_verdict: null
+# Committed tree graded deterministically when no --workspace is given.
+fixture: fixtures/data_pipeline
+# Live LLM execution is deferred; fixture/structural checks run today.
+live: false

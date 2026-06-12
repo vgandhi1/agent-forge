@@ -9,10 +9,12 @@ required document sections, and the Reviewer verdict.
 Today this runner does two things, neither of which calls an LLM:
 
 1. **Schema validation** — every scenario file parses and has the required keys.
-2. **Workspace assertions** — when ``--workspace PATH`` is given, declared
-   ``expected_artifacts`` are checked for existence and ``expected_sections`` for the
-   required headings. This lets you point the runner at a ``workspace/`` produced by a
-   real ``main.py`` run and grade it.
+2. **Artifact assertions** — declared ``expected_artifacts`` are checked for existence and
+   ``expected_sections`` for the required headings against a *grading root*. The grading
+   root is, in order: ``--workspace PATH`` if given (grade a real ``main.py`` run),
+   otherwise the scenario's committed ``fixture`` tree under ``evals/fixtures/`` if it
+   declares one. Fixtures make CI deterministic — the suite grades real artifact contracts
+   without needing a fresh (costly, non-deterministic) pipeline run.
 
 Live-LLM execution (actually running ``main.py`` and grading fresh output) is **TODO**
 and is skipped here; scenarios marked ``live: true`` would be gated behind that.
@@ -33,7 +35,8 @@ from typing import Any
 
 import yaml
 
-SCENARIOS_DIR = Path(__file__).resolve().parent / "scenarios"
+EVALS_DIR = Path(__file__).resolve().parent
+SCENARIOS_DIR = EVALS_DIR / "scenarios"
 
 # Keys every scenario must define; ``str`` means required+typed, tuple means any-of.
 REQUIRED_KEYS: dict[str, Any] = {
@@ -50,6 +53,12 @@ KNOWN_PRESETS = {
     "test",
     "ship",
     "improve",
+    "debug",
+    "fix",
+    "harden",
+    "data",
+    "ml",
+    "factory",
 }
 
 
@@ -92,6 +101,12 @@ def validate_scenario(scenario: dict[str, Any]) -> list[str]:
     artifacts = scenario.get("expected_artifacts", [])
     if artifacts and not isinstance(artifacts, list):
         errors.append("expected_artifacts must be a list of paths")
+    fixture = scenario.get("fixture")
+    if fixture is not None:
+        if not isinstance(fixture, str):
+            errors.append("fixture must be a string path under evals/")
+        elif not (EVALS_DIR / fixture).is_dir():
+            errors.append(f"fixture directory not found: {fixture}")
     return errors
 
 
@@ -145,15 +160,22 @@ def run(workspace: Path | None, scenarios_dir: Path | None = None) -> int:
             print(f"SKIP  {name}: live-LLM eval (TODO)")
             continue
 
-        if workspace is not None:
-            ws_failures = check_workspace(scenario, workspace)
+        # Grading root: --workspace wins; else the scenario's committed fixture tree.
+        grade_root: Path | None = workspace
+        source = "workspace"
+        if grade_root is None and scenario.get("fixture"):
+            grade_root = EVALS_DIR / scenario["fixture"]
+            source = "fixture"
+
+        if grade_root is not None:
+            ws_failures = check_workspace(scenario, grade_root)
             if ws_failures:
                 failed += 1
                 print(f"FAIL  {name}: " + "; ".join(ws_failures))
                 continue
-            print(f"PASS  {name}: schema + workspace artifacts")
+            print(f"PASS  {name}: schema + {source} artifacts")
         else:
-            print(f"OK    {name}: schema valid (no --workspace; artifact checks skipped)")
+            print(f"OK    {name}: schema valid (no fixture/--workspace; artifact checks skipped)")
 
     total = len(scenarios)
     print(f"\n{total - failed}/{total} scenarios passed.")
