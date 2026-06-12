@@ -65,12 +65,25 @@ type the command, pass the goal as the argument:
 | `/agentforge-artifacts` | List generated files | `--list-artifacts` |
 | `/agentforge-dry-run [goal]` | Show config, no API calls | `--dry-run` |
 
-**Claude Code** picks these up automatically (project commands). To use them in **every** project, copy
-them to your global commands dir:
+**Claude Code** picks these up automatically as **project** commands (when the session is opened in
+this repo). The shipped files call `uv run python main.py`, which assumes the repo root is the cwd.
+
+To use the commands in **every** project, you need two things — the binary on `PATH`, and global
+command copies that call it:
 
 ```bash
+# 1. Install the binary globally (so `agentforge` resolves from any directory)
+uv tool install .            # or: pipx install .
+
+# 2. Copy the commands, then point the global copies at the binary
 cp .claude/commands/agentforge*.md ~/.claude/commands/
+sed -i 's/uv run python main.py/agentforge/g' ~/.claude/commands/agentforge*.md
+sed -i 's/allowed-tools: Bash(uv run:\*), Bash(python main.py:\*)/allowed-tools: Bash(agentforge:*)/' ~/.claude/commands/agentforge*.md
 ```
+
+Run from a project, add `--target-repo .` to operate on that repo (greenfield presets otherwise
+write to AgentForge's own `workspace/` sandbox). `agentforge` reads `ANTHROPIC_API_KEY` from the
+environment when no repo `.env` is on the cwd — export it in your shell for global runs.
 
 **Other AI CLIs** (Cursor, Codex, Aider, Continue, Cline, Windsurf): there's no shared slash-command
 standard, so use the **CLI form** the table maps to — ask the assistant to run it, e.g.:
