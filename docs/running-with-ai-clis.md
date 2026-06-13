@@ -55,16 +55,35 @@ type the command, pass the goal as the argument:
 | `/agentforge-test <goal>` | QA tests + pytest | `--preset test` |
 | `/agentforge-ship <goal>` | Docker/CI/runbook (DevOps) | `--preset ship` |
 | `/agentforge-improve <goal>` | Refactor + re-verify | `--preset improve` |
+| `/agentforge-debug <goal>` | Reproduce → patch → re-verify a bug (+ regression test) | `--preset debug` |
+| `/agentforge-fix <goal>` | Apply a known fix + covering test | `--preset fix` |
+| `/agentforge-harden <goal>` | Production-readiness pass (audit → patch → ops) | `--preset harden` |
+| `/agentforge-data <goal>` | Factory data layer: ingestion, contracts, ETL, quality | `--preset data` |
+| `/agentforge-ml <goal>` | Industrial ML layer: features, model, eval, inference | `--preset ml` |
+| `/agentforge-factory <goal>` | End-to-end data + AI app lifecycle | `--preset factory` |
 | `/agentforge-resume <goal>` | Skip completed phases for the same goal | `--resume` |
 | `/agentforge-artifacts` | List generated files | `--list-artifacts` |
 | `/agentforge-dry-run [goal]` | Show config, no API calls | `--dry-run` |
 
-**Claude Code** picks these up automatically (project commands). To use them in **every** project, copy
-them to your global commands dir:
+**Claude Code** picks these up automatically as **project** commands (when the session is opened in
+this repo). The shipped files call `uv run python main.py`, which assumes the repo root is the cwd.
+
+To use the commands in **every** project, you need two things — the binary on `PATH`, and global
+command copies that call it:
 
 ```bash
+# 1. Install the binary globally (so `agentforge` resolves from any directory)
+uv tool install .            # or: pipx install .
+
+# 2. Copy the commands, then point the global copies at the binary
 cp .claude/commands/agentforge*.md ~/.claude/commands/
+sed -i 's/uv run python main.py/agentforge/g' ~/.claude/commands/agentforge*.md
+sed -i 's/allowed-tools: Bash(uv run:\*), Bash(python main.py:\*)/allowed-tools: Bash(agentforge:*)/' ~/.claude/commands/agentforge*.md
 ```
+
+Run from a project, add `--target-repo .` to operate on that repo (greenfield presets otherwise
+write to AgentForge's own `workspace/` sandbox). `agentforge` reads `ANTHROPIC_API_KEY` from the
+environment when no repo `.env` is on the cwd — export it in your shell for global runs.
 
 **Other AI CLIs** (Cursor, Codex, Aider, Continue, Cline, Windsurf): there's no shared slash-command
 standard, so use the **CLI form** the table maps to — ask the assistant to run it, e.g.:
@@ -185,5 +204,22 @@ assistant to tail stderr JSON when summarizing a run.
   run it unattended (background) rather than under a short timeout. Partial artifacts are kept, so
   `--resume` continues where it stopped.
 - **Gates are opt-in** (`--deploy-gate`, `--plan-gate`, `--resume`); default off keeps runs fully autonomous.
+
+---
+
+## Cost & billing (orchestrator vs launcher)
+
+Your assistant and AgentForge are **two separate LLM consumers** — they bill independently:
+
+| Consumer | Role | Billed |
+|----------|------|--------|
+| Your assistant (Claude Code / Cursor / Codex) | **Launcher** — fires the command, monitors, summarizes | Your assistant's own plan: a Claude/Cursor **subscription** (counts against its limits, no per-token charge), or that tool's **API** auth (per-token). |
+| AgentForge | **Orchestrator** — runs the multi-agent build with its own model | The `ANTHROPIC_API_KEY` in `.env` (or env) → **pay-as-you-go per token** on that Anthropic Console account. With Ollama, **$0** (local). |
+
+Key points:
+- **AgentForge is the cost driver.** A `full`/`factory` run is many phases × (generate + independent review) × per-role models — far more tokens than the launcher, which only reads a summary.
+- The two meters are separate even if the same person owns both. The launcher's subscription does **not** pay for AgentForge's API tokens.
+- **Don't let the launcher duplicate the build** (dual-agent contract). If the assistant "becomes" AgentForge and writes the code itself, you pay twice and burn its context.
+- **Cut cost:** `--dry-run` (free, no calls) · Ollama provider (local, $0, see [ollama.md](ollama.md)) · per-role model overrides (downgrade non-critical roles) · staged presets (`intake`→`design`→…) instead of one big `full`/`factory`.
 
 See also: [USAGE.md](USAGE.md) · [ollama.md](ollama.md) · [agents_plan.md](agents_plan.md).

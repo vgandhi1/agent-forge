@@ -21,6 +21,24 @@
       "problemMatcher": []
     },
     {
+      "label": "AgentForge: data (factory data layer)",
+      "type": "shell",
+      "command": "uv run python main.py --preset data --target-repo \"${workspaceFolder}\" --goal \"${input:goal}\"",
+      "problemMatcher": []
+    },
+    {
+      "label": "AgentForge: ml (industrial ML layer)",
+      "type": "shell",
+      "command": "uv run python main.py --preset ml --target-repo \"${workspaceFolder}\" --goal \"${input:goal}\"",
+      "problemMatcher": []
+    },
+    {
+      "label": "AgentForge: factory (end-to-end data + AI app)",
+      "type": "shell",
+      "command": "uv run python main.py --preset factory --target-repo \"${workspaceFolder}\" --plan-gate --goal \"${input:goal}\"",
+      "problemMatcher": []
+    },
+    {
       "label": "AgentForge: dry-run",
       "type": "shell",
       "command": "uv run python main.py --preset full --target-repo \"${workspaceFolder}\" --dry-run --goal \"${input:goal}\"",

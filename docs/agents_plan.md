@@ -241,7 +241,7 @@ With **uv**, prefix commands with `uv run` (examples below show both forms).
 python main.py
 # uv run python main.py
 
-# Workflow presets (intake, design, implement, test, ship, improve, full, debug, fix, harden)
+# Workflow presets (intake, design, implement, test, ship, improve, full, debug, fix, harden, data, ml, factory)
 python main.py --preset intake --goal "Capture requirements for reminders v2"
 python main.py --preset test --goal "Expand API tests for finance module"
 python main.py --preset improve --goal "Reduce DB round-trips and add indexes"

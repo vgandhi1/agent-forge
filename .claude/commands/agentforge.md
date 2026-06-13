@@ -17,8 +17,9 @@ uv run python main.py --goal "$ARGUMENTS"
 - Preview without API calls: append `--dry-run`.
 
 Sibling commands: `/agentforge-intake`, `/agentforge-design`, `/agentforge-implement`,
-`/agentforge-test`, `/agentforge-ship`, `/agentforge-improve`, `/agentforge-resume`,
-`/agentforge-artifacts`, `/agentforge-dry-run`.
+`/agentforge-test`, `/agentforge-ship`, `/agentforge-improve`, `/agentforge-debug`,
+`/agentforge-fix`, `/agentforge-harden`, `/agentforge-data`, `/agentforge-ml`,
+`/agentforge-factory`, `/agentforge-resume`, `/agentforge-artifacts`, `/agentforge-dry-run`.
 
 Setup, flags, and local-model help: [USAGE.md](../../docs/USAGE.md) ·
 [running-with-ai-clis.md](../../docs/running-with-ai-clis.md) · [ollama.md](../../docs/ollama.md).

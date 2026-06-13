@@ -16,7 +16,9 @@ work — only launch it, monitor it, and summarize its results.
 uv run python main.py --preset <preset> --target-repo <abs-path-to-this-repo> --goal "<task>"
 ```
 
-Common presets: `intake` `design` `implement` `test` `ship` `improve` `debug` `fix` `harden` `full`.
+Common presets: `intake` `design` `implement` `test` `ship` `improve` `full` (build/iterate),
+`debug` `fix` `harden` (existing repo — pair with `--target-repo`), and the factory data + AI
+presets `data` `ml` `factory` (add Data Engineer + AI/ML Engineer personas).
 
 Examples:
 
@@ -27,6 +29,10 @@ uv run python main.py --preset debug --target-repo "$PWD" \
 
 # Production-readiness pass on an existing app
 uv run python main.py --preset harden --target-repo "$PWD" --goal "add health checks + CI"
+
+# End-to-end factory data + AI application (data contracts → model → API)
+uv run python main.py --preset factory --target-repo "$PWD" \
+  --goal "Anomaly detection service over the line-sensor stream"
 ```
 
 ## Useful flags
