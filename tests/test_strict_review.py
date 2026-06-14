@@ -58,7 +58,7 @@ async def test_strict_review_blocks_deploy_on_debt(monkeypatch):
         "build X", deploy_gate=True, auto_approve=True, deploy_commit=True, strict_review=True
     )
 
-    assert "Decision: blocked (strict-review)" in _record(writes)
+    assert "Decision: blocked (unresolved review findings)" in _record(writes)
     assert commit_called["v"] is False  # blocked → never commits
 
 
@@ -80,7 +80,43 @@ async def test_strict_review_allows_deploy_when_clean(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_debt_ships_without_strict_flag(monkeypatch):
+async def test_debt_blocks_deploy_by_default(monkeypatch):
+    """Fail-closed default (F5 fix): quality debt blocks the deploy with no flags."""
+    lead, writes = _lead(monkeypatch, {"quality_debt_qa": "edge cases skipped"})
+
+    commit_called = {"v": False}
+
+    async def fake_commit(target, message, **kw):
+        commit_called["v"] = True
+        return True, "feed"
+
+    monkeypatch.setattr(deploy, "git_commit_dir", fake_commit)
+
+    await lead._finalize_sprint(
+        "build X", deploy_gate=True, auto_approve=True, deploy_commit=True
+    )
+
+    assert "Decision: blocked (unresolved review findings)" in _record(writes)
+    assert commit_called["v"] is False  # blocked → never commits
+    assert lead._deploy_blocked is True
+
+
+@pytest.mark.asyncio
+async def test_debt_blocks_autonomous_run(monkeypatch):
+    """Even an autonomous run (no deploy gate) must fail closed on quality debt (F5)."""
+    lead, writes = _lead(monkeypatch, {"quality_debt_architect": "stub, no design"})
+
+    await lead._finalize_sprint(
+        "build X", deploy_gate=False, auto_approve=False, deploy_commit=False
+    )
+
+    assert "Decision: blocked (unresolved review findings)" in _record(writes)
+    assert lead._deploy_blocked is True
+
+
+@pytest.mark.asyncio
+async def test_allow_quality_debt_ships_with_debt(monkeypatch):
+    """Explicit --allow-quality-debt is the escape hatch: ship with the debt flagged."""
     lead, writes = _lead(monkeypatch, {"quality_debt_qa": "edge cases skipped"})
 
     async def fake_commit(target, message, **kw):
@@ -88,9 +124,10 @@ async def test_debt_ships_without_strict_flag(monkeypatch):
 
     monkeypatch.setattr(deploy, "git_commit_dir", fake_commit)
 
-    # Default (no strict_review): debt is flagged but does not block.
     await lead._finalize_sprint(
-        "build X", deploy_gate=True, auto_approve=True, deploy_commit=True
+        "build X", deploy_gate=True, auto_approve=True, deploy_commit=True,
+        allow_quality_debt=True,
     )
 
     assert "Decision: approved (auto)" in _record(writes)
+    assert lead._deploy_blocked is False

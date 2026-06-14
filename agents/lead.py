@@ -107,6 +107,9 @@ class LeadAgent(BaseAgent):
         self._deploy_branch: str | None = None
         # Set when --deploy-gate is on; gates the mid-sprint escalation pause.
         self._deploy_gate: bool = False
+        # Set True by _finalize_sprint when the deploy is fail-closed (e.g. unresolved
+        # review findings). Read by the CLI to return a non-zero exit code.
+        self._deploy_blocked: bool = False
         # Deploy gate hooks — overridable in tests. Defaults do real I/O.
         self._approval_fn = self._default_approval
         self._verify_fn = self._default_verify
@@ -128,7 +131,10 @@ class LeadAgent(BaseAgent):
         plan_gate: bool = False,
         resume: bool = False,
         strict_review: bool = False,
-    ) -> None:
+        allow_quality_debt: bool = False,
+    ) -> bool:
+        """Run the full sprint. Returns True if the deploy was recorded, False if fail-closed
+        (blocked by unresolved review findings or a declined gate)."""
         self._plan_gate = plan_gate
         self._deploy_branch = deploy_branch
         self._deploy_gate = deploy_gate
@@ -172,7 +178,9 @@ class LeadAgent(BaseAgent):
             auto_approve=auto_approve,
             deploy_commit=deploy_commit,
             strict_review=strict_review,
+            allow_quality_debt=allow_quality_debt,
         )
+        return not self._deploy_blocked
 
     async def _run_phase(self, agent_role: str, phase_description: str, goal: str) -> None:
         self.console.rule(f"[bold yellow]Phase: {agent_role.upper()}[/bold yellow]")
@@ -557,6 +565,7 @@ class LeadAgent(BaseAgent):
         auto_approve: bool,
         deploy_commit: bool,
         strict_review: bool = False,
+        allow_quality_debt: bool = False,
     ) -> None:
         self.console.rule("[bold blue]Deploy gate[/bold blue]")
 
@@ -566,23 +575,27 @@ class LeadAgent(BaseAgent):
         _lead_log.info("deploy_verify status=%s", verify_status)
         summary += f"\n\nVerification: {verify_status}"
 
-        # --strict-review: unresolved review findings block the deploy, even before sign-off.
-        if strict_review:
+        # Fail closed by default: unresolved review findings (artifacts force-accepted after the
+        # max revision cap) block the deploy — even on an autonomous run. A green "Sprint Complete"
+        # must mean clean approvals. Pass --allow-quality-debt to ship with the debt flagged instead.
+        if not allow_quality_debt:
             decisions = await self.memory.recall_all("decision")
             debt_count = sum(1 for k in decisions if k.startswith("quality_debt_"))
             if debt_count:
+                self._deploy_blocked = True
                 self.console.print(Panel(
                     Text(
-                        f"Deploy blocked by --strict-review: {debt_count} unresolved review "
-                        f"finding(s) (quality debt). Resolve them and re-run.",
+                        f"Deploy blocked: {debt_count} unresolved review finding(s) (quality debt). "
+                        f"Resolve them and re-run, or pass --allow-quality-debt to ship with the "
+                        f"debt flagged.",
                         style="bold red",
                     ),
-                    title="[bold red]Deploy Blocked (strict-review)[/bold red]",
+                    title="[bold red]Deploy Blocked (unresolved review findings)[/bold red]",
                     border_style="red",
                 ))
-                _lead_log.warning("deploy_blocked strict_review debt=%s", debt_count)
+                _lead_log.warning("deploy_blocked quality_debt debt=%s", debt_count)
                 await self._write_deploy_record(
-                    goal, "blocked (strict-review)", verify_status, verify_detail, commit_info=None
+                    goal, "blocked (unresolved review findings)", verify_status, verify_detail, commit_info=None
                 )
                 return
 
@@ -597,6 +610,7 @@ class LeadAgent(BaseAgent):
                 self.console.log("[red]Verification failed — review the smoke test before approving.[/red]")
             approved = True if auto_approve else await self._approval_fn(summary)
             if not approved:
+                self._deploy_blocked = True
                 self.console.print(Panel(
                     Text("Deploy declined. Nothing was shipped.", style="bold red"),
                     title="[bold red]Deploy Aborted[/bold red]",
