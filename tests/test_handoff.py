@@ -65,8 +65,12 @@ async def test_resume_skips_completed_phases(monkeypatch) -> None:
         return {"goal_fp": goal_fingerprint(goal), "completed": ["pm", "architect"],
                 "artifacts": {"pm_artifact": "docs/requirements.md"}}
 
+    async def fake_preflight():
+        return True
+
     monkeypatch.setattr(lead, "_run_phase", fake_run_phase)
     monkeypatch.setattr(lead, "_finalize_sprint", fake_finalize)
+    monkeypatch.setattr(lead, "_reviewer_preflight", fake_preflight)
     monkeypatch.setattr(lead.memory, "remember", fake_remember)
     monkeypatch.setattr(handoff, "load_checkpoint", fake_load_checkpoint)
 
@@ -92,8 +96,12 @@ async def test_no_resume_runs_all(monkeypatch) -> None:
     async def fake_remember(*a, **k):
         return None
 
+    async def fake_preflight():
+        return True
+
     monkeypatch.setattr(lead, "_run_phase", fake_run_phase)
     monkeypatch.setattr(lead, "_finalize_sprint", fake_finalize)
+    monkeypatch.setattr(lead, "_reviewer_preflight", fake_preflight)
     monkeypatch.setattr(lead.memory, "remember", fake_remember)
 
     phases = [("pm", "x"), ("backend", "x")]

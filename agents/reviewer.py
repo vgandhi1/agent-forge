@@ -161,8 +161,12 @@ class ReviewerAgent(BaseAgent):
                 "should_fix": [],
                 "drift": [],
                 "escalation_question": "",
+                # The model never called submit_review — a tool-contract failure, not a real
+                # verdict. The preflight uses this to detect a reviewer model that can't review.
+                "submitted": False,
             }
 
+        verdict["submitted"] = True
         verdict.setdefault("must_fix", [])
         verdict.setdefault("should_fix", [])
         verdict.setdefault("drift", [])
