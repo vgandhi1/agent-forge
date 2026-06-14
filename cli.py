@@ -172,6 +172,7 @@ async def _run_cycle(
     resume: bool = False,
     strict_review: bool = False,
     allow_quality_debt: bool = False,
+    adaptive: bool = False,
 ) -> bool:
     """Returns True if the deploy was recorded, False if fail-closed (blocked/declined)."""
     console = Console()
@@ -224,6 +225,7 @@ async def _run_cycle(
             resume=resume,
             strict_review=strict_review,
             allow_quality_debt=allow_quality_debt,
+            adaptive=adaptive,
         )
     finally:
         for role in [r for r in agents_map if r != "lead"]:
@@ -364,6 +366,13 @@ def main() -> None:
         help="Skip phases already completed for the same goal (reads handoff/checkpoint.json)",
     )
     parser.add_argument(
+        "--adaptive",
+        action="store_true",
+        help="Agentic mode: the Lead plans the phase sequence from the goal, re-routes on phase "
+        "outcomes (e.g. QA failure → backend fix), and self-checks the goal is met before "
+        "finishing (env: AGENTFORGE_ADAPTIVE=1)",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging to stderr (agentforge loggers)",
@@ -453,6 +462,7 @@ def main() -> None:
             f"[bold]Deploy commit:[/bold] {'on' if commit_on else 'off'}"
             f"{f' → branch {args.deploy_branch}' if (commit_on and args.deploy_branch) else ''}\n"
             f"[bold]Plan gate:[/bold] {'on (backend)' if (args.plan_gate or os.getenv('AGENTFORGE_PLAN_GATE', '').strip().lower() in ('1', 'true', 'yes')) else 'off'}\n"
+            f"[bold]Adaptive:[/bold] {'on (plan + re-route + goal-check)' if (args.adaptive or os.getenv('AGENTFORGE_ADAPTIVE', '').strip().lower() in ('1', 'true', 'yes')) else 'off'}\n"
             f"[bold]Resume:[/bold] {'on' if args.resume else 'off'}\n\n"
             f"[bold]Sprint Goal:[/bold]\n{goal_text.strip()}",
             title="[cyan]AgentForge Dry Run[/cyan]",
@@ -490,6 +500,7 @@ def main() -> None:
     plan_gate = args.plan_gate or _env_flag("AGENTFORGE_PLAN_GATE")
     strict_review = args.strict_review or _env_flag("AGENTFORGE_STRICT_REVIEW")
     allow_quality_debt = args.allow_quality_debt or _env_flag("AGENTFORGE_ALLOW_QUALITY_DEBT")
+    adaptive = args.adaptive or _env_flag("AGENTFORGE_ADAPTIVE")
 
     try:
         deploy_ok = asyncio.run(_run_cycle(
@@ -504,6 +515,7 @@ def main() -> None:
             resume=args.resume,
             strict_review=strict_review,
             allow_quality_debt=allow_quality_debt,
+            adaptive=adaptive,
         ))
         if not deploy_ok:
             # Fail closed: blocked or declined deploy must surface as a non-zero exit so

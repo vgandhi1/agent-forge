@@ -67,7 +67,9 @@ def build_prompt(profile: Profile, *, sprint_goal: str, arch_content: str, req_c
         f"3. Idempotent, restartable pipeline modules with clear extract/validate/transform/load stages.\n"
         f"4. A test or sample fixture proving the validation rejects out-of-range / malformed rows.\n\n"
         f"Make units explicit, keep pipelines replay-safe (a re-run must not double-load), and record "
-        f"row/reject counts per run. Reply without a tool call only when all files are written."
+        f"row/reject counts per run. After writing, call run_tests to execute the validation/pipeline "
+        f"tests — read any failures, fix the cause, and run_tests again until green (or you have done "
+        f"all you can). Reply without a tool call only when all files are written and verified."
     )
 
 
@@ -122,6 +124,7 @@ class DataEngineerAgent(BaseAgent):
             tools=_TOOLS,
             max_steps=30,
             read_tools=True,
+            exec_tools=True,
         )
 
         if not written_files:
@@ -168,14 +171,16 @@ class DataEngineerAgent(BaseAgent):
             user_message=(
                 f"Revise the data engineering layer based on this feedback:\n{notes}\n\n"
                 f"Files already written:\n{files_summary}\n\n"
-                f"Write corrected files using write_file (one call per file). "
-                f"Reply without a tool call only when all fixes are written."
+                f"Write corrected files using write_file (one call per file), then call run_tests to "
+                f"confirm the pipeline/validation passes. "
+                f"Reply without a tool call only when all fixes are written and verified."
             ),
             tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=_TOOLS,
             max_steps=30,
             read_tools=True,
+            exec_tools=True,
         )
 
         await self.bus.publish(Message(

@@ -10,7 +10,7 @@ from rich.text import Text
 from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
-from core.phases import DEFAULT_PHASES
+from core.phases import DEFAULT_PHASES, VALID_ROLES
 from core.paths import METADATA_ROOT
 from core.profile import load_profile, DEFAULT_PROFILE
 from core import deploy, handoff, hooks
@@ -92,6 +92,83 @@ _DELEGATION_TOOLS = [
     },
 ]
 
+_PLANNING_TOOLS = [
+    {
+        "name": "propose_plan",
+        "description": (
+            "Propose the ordered sequence of phases to deliver the sprint goal. Each phase assigns "
+            "one role a concrete objective. Order by dependency (requirements before design before "
+            "implementation before testing before ship). Reuse the seed plan as a baseline; only "
+            "deviate when the goal clearly calls for it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "phases": {
+                    "type": "array",
+                    "description": "Ordered phases to execute",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {
+                                "type": "string",
+                                "enum": list(VALID_ROLES),
+                                "description": "The agent that owns this phase",
+                            },
+                            "objective": {
+                                "type": "string",
+                                "description": "What this phase must produce, specific to the goal",
+                            },
+                        },
+                        "required": ["role", "objective"],
+                    },
+                },
+                "rationale": {
+                    "type": "string",
+                    "description": "Why this sequence fits the goal (one or two sentences)",
+                },
+            },
+            "required": ["phases"],
+        },
+    },
+]
+
+_REPLAN_TOOLS = [
+    {
+        "name": "adjust_plan",
+        "description": (
+            "Decide what to do after a phase finished. Either continue with the remaining plan, or "
+            "insert ONE focused follow-up phase to run next (e.g. route a QA-found defect back to "
+            "backend, or add a missing verification step). Only insert when the just-finished phase "
+            "left a real, actionable gap — do not pad the plan."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["continue", "insert_phase"],
+                    "description": "continue = proceed with the existing plan; insert_phase = run one follow-up next",
+                },
+                "role": {
+                    "type": "string",
+                    "enum": list(VALID_ROLES),
+                    "description": "For insert_phase: the agent to run next",
+                },
+                "objective": {
+                    "type": "string",
+                    "description": "For insert_phase: the specific, scoped follow-up task",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this adjustment is warranted",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+]
+
 _lead_log = logging.getLogger("agentforge.lead")
 
 
@@ -104,6 +181,11 @@ class LeadAgent(BaseAgent):
         self._current_brief: str = ""
         self._goal: str = ""
         self._plan_gate: bool = False
+        # Adaptive mode: the Lead plans the phase sequence from the goal, re-routes on outcomes
+        # (e.g. QA failure → backend fix), and self-checks the goal is met before finishing.
+        # Off by default — a fixed preset runs exactly as given (backward compatible).
+        self._adaptive: bool = False
+        self._replan_budget: int = 0
         self._last_review_summary: str = ""
         # PR-workflow branch for --deploy-commit (set by run_development_cycle); None = current branch.
         self._deploy_branch: str | None = None
@@ -134,13 +216,21 @@ class LeadAgent(BaseAgent):
         resume: bool = False,
         strict_review: bool = False,
         allow_quality_debt: bool = False,
+        adaptive: bool = False,
     ) -> bool:
         """Run the full sprint. Returns True if the deploy was recorded, False if fail-closed
-        (blocked by unresolved review findings or a declined gate)."""
+        (blocked by unresolved review findings or a declined gate).
+
+        When ``adaptive`` is set, the Lead plans the phase sequence from the goal (seeded by the
+        preset), re-routes on phase outcomes, and self-checks the goal is met before finishing.
+        When unset (default), the given ``phases`` run in order, unchanged.
+        """
         self._plan_gate = plan_gate
         self._deploy_branch = deploy_branch
         self._deploy_gate = deploy_gate
         self._goal = goal
+        self._adaptive = adaptive
+        self._replan_budget = 3 if adaptive else 0
         phase_list = phases if phases is not None else DEFAULT_PHASES
         self.console.print(Panel(
             f"[bold]Sprint Goal:[/bold]\n{goal.strip()}",
@@ -171,11 +261,47 @@ class LeadAgent(BaseAgent):
             else:
                 self.console.log("[yellow]Resume requested but checkpoint goal differs — starting fresh.[/yellow]")
 
-        for agent_role, phase_description in phase_list:
+        # Build the work queue. In adaptive mode the Lead proposes the plan from the goal
+        # (seeded by the preset); otherwise the preset runs exactly as given.
+        from collections import deque
+
+        if self._adaptive:
+            planned = await self._plan_phases(goal, list(phase_list))
+            queue: deque[tuple[str, str]] = deque(planned)
+        else:
+            queue = deque(phase_list)
+
+        # Hard cap so replanning / done-check remediation can never loop forever.
+        hard_cap = len(queue) + 8
+        executed = 0
+        done_check_done = False
+
+        while queue and executed < hard_cap:
+            agent_role, phase_description = queue.popleft()
             if agent_role in completed:
                 self.console.log(f"[dim]Skipping {agent_role} (already complete in checkpoint).[/dim]")
                 continue
-            await self._run_phase(agent_role, phase_description, goal)
+
+            outcome = await self._run_phase(agent_role, phase_description, goal)
+            executed += 1
+
+            if self._adaptive:
+                for follow_role, follow_obj in await self._replan_after_phase(agent_role, outcome, goal):
+                    self.console.log(f"[cyan]Replan:[/cyan] inserting {follow_role} — {follow_obj[:70]}")
+                    queue.appendleft((follow_role, follow_obj))
+
+            # When the plan drains in adaptive mode, verify the goal is actually met before
+            # declaring success — and enqueue one bounded remediation round if it is not.
+            if self._adaptive and not queue and not done_check_done:
+                done_check_done = True
+                met, gaps = await self._verify_goal_met(goal)
+                if not met and gaps:
+                    await self.memory.remember("goal_gap", gaps, "decision")
+                    self.console.log(f"[yellow]Goal check: gaps remain[/yellow] — {gaps[:80]}")
+                    queue.append(("backend", f"Close the remaining gaps so the goal is met: {gaps}"))
+                    queue.append(("qa", "Re-verify the result meets the goal after remediation; run the tests"))
+                else:
+                    self.console.log("[green]Goal check: acceptance criteria met.[/green]")
 
         self.console.print(Panel(
             Text("All phases complete. Artifacts written to workspace/", style="bold green"),
@@ -193,7 +319,11 @@ class LeadAgent(BaseAgent):
         )
         return not self._deploy_blocked
 
-    async def _run_phase(self, agent_role: str, phase_description: str, goal: str) -> None:
+    async def _run_phase(self, agent_role: str, phase_description: str, goal: str) -> dict:
+        """Run one phase to a verdict. Returns an outcome dict the adaptive loop can route on:
+        ``{"role", "approved", "quality_debt", "escalated"}``.
+        """
+        outcome = {"role": agent_role, "approved": False, "quality_debt": False, "escalated": False}
         self.console.rule(f"[bold yellow]Phase: {agent_role.upper()}[/bold yellow]")
         _lead_log.info("phase_start role=%s", agent_role)
 
@@ -260,6 +390,7 @@ class LeadAgent(BaseAgent):
                 break
 
             if result_msg.type == MessageType.ESCALATION:
+                outcome["escalated"] = True
                 await self._handle_escalation(agent_role, result_msg)
                 continue  # already recorded by the agent; will surface at the deploy gate
 
@@ -276,10 +407,12 @@ class LeadAgent(BaseAgent):
                 self._approved_artifacts[artifact_key] = artifact_path
                 await self.memory.remember(artifact_key, artifact_path, "artifact_ref")
                 self.console.log(f"[green]✓ {agent_role} artifact approved[/green]")
+                outcome["approved"] = True
                 break
 
             revision += 1
             if revision >= max_revisions:
+                outcome["quality_debt"] = True
                 artifact_path = artifact.get("primary_path", artifact.get("path", ""))
                 self._approved_artifacts[f"{agent_role}_artifact"] = artifact_path
                 await self.memory.remember(f"{agent_role}_artifact", artifact_path, "artifact_ref")
@@ -328,6 +461,8 @@ class LeadAgent(BaseAgent):
         emit("phase_complete", phase=agent_role, role=agent_role, artifact=path)
 
         await self._run_phase_hook("post-phase", agent_role)
+
+        return outcome
 
     async def _run_phase_hook(self, stage: str, agent_role: str) -> None:
         """Run an optional project guardrail hook around a phase (advisory, never fatal)."""
@@ -382,6 +517,134 @@ class LeadAgent(BaseAgent):
         if answer:
             await self.memory.remember(f"escalation_guidance_{agent_role}", answer, "decision")
             self.console.log(f"[cyan]Recorded guidance for {agent_role}.[/cyan]")
+
+    # ------------------------------------------------------------------ adaptive planning
+
+    def _normalize_plan(self, raw_phases: list) -> list[tuple[str, str]]:
+        """Validate an LLM-proposed phase list into ``[(role, objective)]``; drop bad entries."""
+        out: list[tuple[str, str]] = []
+        for p in raw_phases or []:
+            if not isinstance(p, dict):
+                continue
+            role = str(p.get("role", "")).strip()
+            objective = str(p.get("objective", "")).strip()
+            if role in VALID_ROLES and objective:
+                out.append((role, objective))
+        return out
+
+    async def _plan_phases(
+        self, goal: str, seed: list[tuple[str, str]]
+    ) -> list[tuple[str, str]]:
+        """Ask the Lead to propose the phase sequence for the goal, seeded by the preset.
+
+        Falls back to the seed plan if the model proposes nothing usable, so a planning hiccup
+        never strands the sprint.
+        """
+        seed_desc = "\n".join(f"- {r}: {d}" for r, d in seed) or "(none)"
+        self.console.log("[cyan]Planning the sprint from the goal…[/cyan]")
+        context = await self._build_dynamic_context()
+        context += f"\n\n## Sprint Goal\n{goal}"
+        try:
+            response = await self._call_llm(
+                user_message=(
+                    "Plan the phases to deliver this sprint goal. Use the seed plan below as a "
+                    "baseline and adjust only where the goal clearly requires it (add, drop, or "
+                    "reorder phases). Respect dependencies. Call propose_plan exactly once.\n\n"
+                    f"Seed plan:\n{seed_desc}"
+                ),
+                dynamic_context=context,
+                tools=_PLANNING_TOOLS,
+            )
+        except Exception as e:  # noqa: BLE001 — planning is best-effort; never strand the run
+            _lead_log.warning("plan_phases error=%s — using seed plan", e)
+            return seed
+
+        for name, tool_input in self._extract_tool_calls(response):
+            if name == "propose_plan":
+                planned = self._normalize_plan(tool_input.get("phases", []))
+                if planned:
+                    await self.memory.remember(
+                        "sprint_plan", "; ".join(f"{r}:{o[:60]}" for r, o in planned), "decision"
+                    )
+                    self.console.log(
+                        f"[green]Plan:[/green] {' → '.join(r for r, _ in planned)}"
+                    )
+                    return planned
+        self.console.log("[dim]No usable plan proposed — using the seed plan.[/dim]")
+        return seed
+
+    async def _replan_after_phase(
+        self, agent_role: str, outcome: dict, goal: str
+    ) -> list[tuple[str, str]]:
+        """Optionally insert one follow-up phase based on the just-finished phase's outcome.
+
+        Bounded by ``self._replan_budget`` and only consulted when there is a real signal
+        (unresolved review findings or an escalation). Returns ``[]`` to continue unchanged.
+        """
+        if self._replan_budget <= 0:
+            return []
+        if not (outcome.get("quality_debt") or outcome.get("escalated")):
+            return []
+
+        signal = "unresolved review findings" if outcome.get("quality_debt") else "an escalation"
+        context = await self._build_dynamic_context()
+        context += f"\n\n## Sprint Goal\n{goal}"
+        try:
+            response = await self._call_llm(
+                user_message=(
+                    f"The {agent_role} phase just finished with {signal}. Decide whether to insert "
+                    f"one focused follow-up phase to run next, or continue with the remaining plan. "
+                    f"Call adjust_plan exactly once."
+                ),
+                dynamic_context=context,
+                tools=_REPLAN_TOOLS,
+            )
+        except Exception as e:  # noqa: BLE001 — replanning is best-effort
+            _lead_log.warning("replan error=%s — continuing", e)
+            return []
+
+        for name, tool_input in self._extract_tool_calls(response):
+            if name == "adjust_plan" and tool_input.get("action") == "insert_phase":
+                role = str(tool_input.get("role", "")).strip()
+                objective = str(tool_input.get("objective", "")).strip()
+                if role in VALID_ROLES and objective:
+                    self._replan_budget -= 1
+                    reason = str(tool_input.get("reason", "")).strip()
+                    await self.memory.remember(
+                        f"replan_{agent_role}", f"insert {role}: {objective[:80]} ({reason[:80]})", "decision"
+                    )
+                    _lead_log.info("replan insert role=%s after=%s", role, agent_role)
+                    return [(role, objective)]
+        return []
+
+    async def _verify_goal_met(self, goal: str) -> tuple[bool, str]:
+        """Self-check whether the accepted artifacts satisfy the goal. Advisory, best-effort.
+
+        Returns ``(met, gaps)``; on any error returns ``(True, "")`` so a hiccup never blocks the
+        run (the deploy quality gate remains the hard backstop).
+        """
+        artifacts_desc = "\n".join(f"- {k}: {v}" for k, v in self._approved_artifacts.items()) or "(none)"
+        context = await self._build_dynamic_context()
+        try:
+            response = await self._call_llm(
+                user_message=(
+                    "Review whether the sprint goal is actually satisfied by the accepted artifacts.\n\n"
+                    f"Sprint goal:\n{goal}\n\n"
+                    f"Accepted artifacts:\n{artifacts_desc}\n\n"
+                    "If the goal's core deliverables are present, reply exactly 'MET'. Otherwise reply "
+                    "'UNMET: <the specific missing or incomplete deliverables>'. Be strict but fair — "
+                    "minor polish is not 'unmet'."
+                ),
+                dynamic_context=context,
+            )
+        except Exception as e:  # noqa: BLE001
+            _lead_log.warning("goal_check error=%s — treating as met", e)
+            return True, ""
+        verdict = self._extract_text(response).strip()
+        if verdict.upper().startswith("MET"):
+            return True, ""
+        gaps = verdict.split(":", 1)[-1].strip() if ":" in verdict else verdict
+        return False, gaps
 
     async def _reviewer_preflight(self) -> bool:
         """Smoke-test that the reviewer model returns a valid verdict on a trivial fixture.

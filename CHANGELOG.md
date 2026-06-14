@@ -2,6 +2,34 @@
 
 Document **user-visible** changes (CLI flags, behavior, public docs, breaking renames of user-facing concepts). **Skip** entries for internal-only refactors—e.g. module/symbol renames or log identifiers that do not change how users run AgentForge.
 
+## Unreleased — agentic core (planning, re-routing, execution feedback)
+
+Turns the orchestrator from a fixed-pipeline executor into an adaptive agent, and gives every
+builder an act→observe loop. All opt-in and backward compatible — without the new flag, presets
+run exactly as before. Full suite green: **193 passed** (14 new in `tests/test_agentic.py`).
+
+- **Agentic mode — `--adaptive` / `AGENTFORGE_ADAPTIVE=1`:** the Lead now (1) **plans** the phase
+  sequence from the goal (seeded by the preset, fail-safe to the seed), (2) **re-routes** on
+  outcomes — when a phase ends with unresolved review findings or an escalation it can insert one
+  focused follow-up phase next (e.g. a QA-found defect routed back to Backend), bounded by a
+  replanning budget and a hard phase cap so it can never loop, and (3) **self-checks the goal is
+  met** before "Sprint Complete", enqueuing one bounded remediation round when gaps remain.
+  Default off; surfaced in `--dry-run`. (`agents/lead.py`, `cli.py`)
+- **Execution feedback for builders — `run_tests` / `run_lint`:** Backend, Data Engineer, and ML
+  Engineer can now execute the project profile's configured `verify_cmd` / `lint_cmd` inside their
+  tool loop, read the failures, fix the cause, and re-run — instead of writing code blind. Wired
+  via `run_tool_loop(exec_tools=True)`. **Security:** only operator-configured profile commands
+  run; the model never supplies an arbitrary shell string. (`agents/base_agent.py`, reusing
+  `core/deploy.run_verify`)
+- **Factory / automation focus:** the data & AI builders gain the act→observe loop, so the
+  `data` / `ml` / `factory` presets can run their pipeline-validation and reproducible-eval tests
+  and iterate (reject bad rows, confirm serving rejects malformed input) — and `--adaptive` plans
+  and re-routes those presets end to end.
+- **Tests:** unit suite grows from 179 to 193 (`tests/test_agentic.py` — exec-tool injection and
+  invocation, plan normalization/fallback, replan budget/signal/insert, goal self-check parsing).
+- **Docs:** `README.md` adds an "Agentic mode (`--adaptive`)" section and flag-table row;
+  `improvement.md` adds "Phase D: agentic core" with the shipped/open breakdown.
+
 ## Unreleased — factory data & AI engineering team
 
 Adds two domain personas so AgentForge can build **factory system data & AI engineering**

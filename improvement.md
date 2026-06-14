@@ -86,6 +86,30 @@ greenfield `workspace/` sandbox.
   (eval roadmap step 7). Opt-in by presence, advisory (non-zero exit is surfaced, not fatal).
   **[done]** — `core/hooks.py`, wired in `LeadAgent._run_phase`; `tests/test_hooks.py`.
 
+## Phase D: agentic core (shipped 2026-06-13)
+
+Turns the orchestrator from a fixed-pipeline executor into an adaptive agent. All opt-in and
+backward compatible (default = the old fixed pipeline). Suite green: 193 passed (14 new in
+`tests/test_agentic.py`).
+
+| # | Item | Status |
+|---|------|--------|
+| D1 | Execution feedback for all builders — `run_tests` / `run_lint` tools (`run_tool_loop(exec_tools=True)`), profile-driven, sandboxed to configured commands; wired into backend / data_engineer / ml_engineer | **[done]** — `agents/base_agent.py`, `core/deploy.run_verify` |
+| D2 | Dynamic planning — Lead proposes the phase sequence from the goal (`_plan_phases` + `propose_plan` tool), seeded by the preset, fail-safe to seed | **[done]** — `agents/lead.py` |
+| D3 | Adaptive re-routing — insert a follow-up phase on unresolved review findings / escalation (`_replan_after_phase` + `adjust_plan` tool); bounded by a replan budget + hard phase cap | **[done]** — `agents/lead.py` |
+| D4 | Goal self-check — verify the goal is met before finishing, enqueue one bounded remediation round (`_verify_goal_met`) | **[done]** — `agents/lead.py` |
+| D5 | CLI surface — `--adaptive` / `AGENTFORGE_ADAPTIVE=1`, shown in `--dry-run` | **[done]** — `cli.py` |
+
+> Builders are now self-correcting (write → run_tests → read failures → fix → re-run), and the
+> Lead plans/re-routes/goal-checks instead of executing a static list. This is the bridge from
+> "multi-agent pipeline" to "agentic system". Factory presets (`data`/`ml`/`factory`) benefit
+> directly: the data/ML builders can run their validation and reproducible-eval tests and iterate.
+
+### Phase D — still open
+- Patch-based edits (`edit_file` / `apply_patch`) instead of full-file rewrites (cheaper, safer on `--target-repo`).
+- Semantic memory: top-k retrieval over the flat decisions log (`_build_dynamic_context`) instead of full replay.
+- Parallel independent phases (needs workspace locking) and dynamic sub-agent spawning.
+
 ## Deferred (Phase C)
 
 > See `feedback.md` Part 8 for advisability, dependencies, and recommended order. Implement
