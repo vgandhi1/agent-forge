@@ -473,6 +473,31 @@ class LeadAgent(BaseAgent):
             return []
         return grounding_gap(self._goal, content)
 
+    async def _thin_artifacts(self) -> list[tuple[str, str]]:
+        """Return (path, reason) for accepted spec docs that are thin/placeholder (F3 backstop).
+
+        Re-reads the accepted artifacts at the deploy gate and flags any graded spec document
+        (requirements/architecture/design) that is a stub, deferred-placeholder, or echoes the
+        reviewer error. Skippable via ``AGENTFORGE_SKIP_DOC_QUALITY=1``.
+        """
+        if os.getenv("AGENTFORGE_SKIP_DOC_QUALITY", "").strip().lower() in ("1", "true", "yes"):
+            return []
+
+        from core.artifact_quality import is_graded_doc, thin_artifact_reason
+
+        flagged: list[tuple[str, str]] = []
+        for path in self._approved_artifacts.values():
+            if not path or not is_graded_doc(path):
+                continue
+            content = await self.artifacts.read(path)
+            if content.startswith("[File not found:") or content.startswith("[Access denied:"):
+                flagged.append((path, "artifact missing or unreadable at deploy time"))
+                continue
+            reason = thin_artifact_reason(path, content)
+            if reason:
+                flagged.append((path, reason))
+        return flagged
+
     async def _review_artifact(self, agent_role: str, artifact: dict, attempt: int) -> bool:
         """Consult the independent Reviewer and act on its verdict.
 
@@ -702,26 +727,38 @@ class LeadAgent(BaseAgent):
         summary += f"\n\nVerification: {verify_status}"
 
         # Fail closed by default: unresolved review findings (artifacts force-accepted after the
-        # max revision cap) block the deploy — even on an autonomous run. A green "Sprint Complete"
-        # must mean clean approvals. Pass --allow-quality-debt to ship with the debt flagged instead.
+        # max revision cap) or thin/placeholder spec docs block the deploy — even on an autonomous
+        # run. A green "Sprint Complete" must mean clean approvals. Pass --allow-quality-debt to
+        # ship with the debt flagged instead.
         if not allow_quality_debt:
             decisions = await self.memory.recall_all("decision")
             debt_count = sum(1 for k in decisions if k.startswith("quality_debt_"))
-            if debt_count:
+            thin = await self._thin_artifacts()
+            if debt_count or thin:
                 self._deploy_blocked = True
+                reasons: list[str] = []
+                if debt_count:
+                    reasons.append(f"{debt_count} unresolved review finding(s) (quality debt)")
+                if thin:
+                    reasons.append(f"{len(thin)} thin/placeholder spec doc(s)")
+                body = "Deploy blocked: " + "; ".join(reasons) + "."
+                if thin:
+                    body += "\n\nThin artifacts:\n" + "\n".join(f"- {p}: {r}" for p, r in thin)
+                body += "\n\nResolve and re-run, or pass --allow-quality-debt to ship flagged."
+                # Preserve the existing record label when the block is debt-only (keeps the
+                # quality-debt contract stable); name thin docs when that is the cause.
+                if debt_count:
+                    label = "blocked (unresolved review findings)"
+                else:
+                    label = "blocked (thin or placeholder artifacts)"
                 self.console.print(Panel(
-                    Text(
-                        f"Deploy blocked: {debt_count} unresolved review finding(s) (quality debt). "
-                        f"Resolve them and re-run, or pass --allow-quality-debt to ship with the "
-                        f"debt flagged.",
-                        style="bold red",
-                    ),
-                    title="[bold red]Deploy Blocked (unresolved review findings)[/bold red]",
+                    Text(body, style="bold red"),
+                    title="[bold red]Deploy Blocked (quality gate)[/bold red]",
                     border_style="red",
                 ))
-                _lead_log.warning("deploy_blocked quality_debt debt=%s", debt_count)
+                _lead_log.warning("deploy_blocked debt=%s thin=%s", debt_count, len(thin))
                 await self._write_deploy_record(
-                    goal, "blocked (unresolved review findings)", verify_status, verify_detail, commit_info=None
+                    goal, label, verify_status, verify_detail, commit_info=None
                 )
                 return
 

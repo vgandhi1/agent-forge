@@ -720,7 +720,11 @@ class BaseAgent(ABC):
         ) from last_err
 
     async def _build_dynamic_context(self) -> str:
-        decisions = await self.memory.recall_all("decision")
+        from core.context_hygiene import sanitize_decisions
+
+        # Strip AgentForge's own runtime/config (model, Ollama/WSL host, provider) from the
+        # replayed decisions so it cannot bleed into a worker's brief and into the product (F4).
+        decisions = sanitize_decisions(await self.memory.recall_all("decision"))
         artifacts = await self.memory.recall_all("artifact_ref")
         parts: list[str] = []
         if decisions:

@@ -192,13 +192,22 @@ The reviewer's `submit_review` needs reliable tool-calling; qwen2.5 becomes depe
    verdict the run aborts early with a clear error naming the reviewer model and a stronger-tag
    suggestion — instead of the F2 death-spiral that burned ~40+ calls. Bypass:
    `AGENTFORGE_SKIP_REVIEWER_PREFLIGHT=1`.
-6. **Context hygiene — ⬜ open.** Strip runtime/system/config context from role briefs so it
-   cannot leak into product artifacts (F4).
+6. **Context hygiene — ✅ implemented.** `core/context_hygiene.py` strips AgentForge's own
+   runtime/config (model tags, Ollama/WSL host, provider, `AGENTFORGE_*`, ports) from the
+   recorded decisions replayed into each worker's dynamic context, so it cannot bleed into a
+   product artifact (F4). The deny-list is deliberately narrow (framework infra only) to avoid
+   filtering legitimate product decisions.
 
 ### Verification
-7. ⬜ Open: add a post-run assertion that emitted docs are non-trivial (length / section
-   presence) and on-topic before recording a deploy. (The grounding gate (#3) now covers the
-   on-topic half at review time.)
+7. **Non-trivial-doc assertion — ✅ implemented.** `core/artifact_quality.py` +
+   `LeadAgent._thin_artifacts` re-read the accepted spec docs at the deploy gate and **block**
+   (fail-closed, same path as F5) any that are a stub, dominated by "will be documented
+   separately" placeholders, or echo the reviewer error — exactly the F3 architecture.md.
+   Bypass: `AGENTFORGE_SKIP_DOC_QUALITY=1`. The grounding gate (#3) covers the on-topic half at
+   review time; this covers the non-trivial half at the gate.
+
+All recommendations #3–#7 are now implemented; only the operational model-config change (the
+local-only qwen tags above) is left to the operator.
 
 ---
 

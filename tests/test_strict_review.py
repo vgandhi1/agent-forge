@@ -115,6 +115,44 @@ async def test_debt_blocks_autonomous_run(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_thin_doc_blocks_deploy(monkeypatch):
+    """F3 backstop: a thin/placeholder spec doc blocks the deploy even with no quality debt."""
+    lead, writes = _lead(monkeypatch, {})  # no quality debt
+    lead._approved_artifacts = {"architect_artifact": "docs/architecture.md"}
+
+    async def fake_read(path):
+        return "# Architecture\n\nDetails will be documented separately in a future ticket.\n"
+
+    monkeypatch.setattr(lead.artifacts, "read", fake_read)
+
+    await lead._finalize_sprint("build X", deploy_gate=False, auto_approve=False, deploy_commit=False)
+
+    rec = _record(writes)
+    assert "Decision: blocked (thin or placeholder artifacts)" in rec
+    assert lead._deploy_blocked is True
+
+
+@pytest.mark.asyncio
+async def test_allow_quality_debt_ships_with_thin_doc(monkeypatch):
+    """--allow-quality-debt also overrides the thin-doc backstop."""
+    lead, writes = _lead(monkeypatch, {})
+    lead._approved_artifacts = {"architect_artifact": "docs/architecture.md"}
+
+    async def fake_read(path):
+        return "# Architecture\n\nTODO.\n"
+
+    monkeypatch.setattr(lead.artifacts, "read", fake_read)
+
+    await lead._finalize_sprint(
+        "build X", deploy_gate=False, auto_approve=False, deploy_commit=False,
+        allow_quality_debt=True,
+    )
+
+    assert "Decision: autonomous" in _record(writes)
+    assert lead._deploy_blocked is False
+
+
+@pytest.mark.asyncio
 async def test_allow_quality_debt_ships_with_debt(monkeypatch):
     """Explicit --allow-quality-debt is the escape hatch: ship with the debt flagged."""
     lead, writes = _lead(monkeypatch, {"quality_debt_qa": "edge cases skipped"})
