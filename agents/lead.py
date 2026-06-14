@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import sys
 from datetime import UTC, datetime
 
@@ -101,6 +102,7 @@ class LeadAgent(BaseAgent):
         # Independent reviewer consulted at the approval gate (see _review_artifact).
         self.reviewer = ReviewerAgent("reviewer", bus, artifact_store, console)
         self._current_brief: str = ""
+        self._goal: str = ""
         self._plan_gate: bool = False
         self._last_review_summary: str = ""
         # PR-workflow branch for --deploy-commit (set by run_development_cycle); None = current branch.
@@ -138,6 +140,7 @@ class LeadAgent(BaseAgent):
         self._plan_gate = plan_gate
         self._deploy_branch = deploy_branch
         self._deploy_gate = deploy_gate
+        self._goal = goal
         phase_list = phases if phases is not None else DEFAULT_PHASES
         self.console.print(Panel(
             f"[bold]Sprint Goal:[/bold]\n{goal.strip()}",
@@ -146,6 +149,14 @@ class LeadAgent(BaseAgent):
         ))
 
         await self.memory.remember("sprint_goal", goal)
+
+        # Preflight: confirm the reviewer model can actually emit a structured verdict before
+        # we run any phase. A reviewer that can't review sends every artifact into a
+        # reject→revise death-spiral that burns dozens of model calls and never converges
+        # (see agentforge-failure.md, F2). Abort early with a clear, actionable error instead.
+        if not await self._reviewer_preflight():
+            self._deploy_blocked = True
+            return False
 
         completed: set[str] = set()
         if resume:
@@ -372,6 +383,96 @@ class LeadAgent(BaseAgent):
             await self.memory.remember(f"escalation_guidance_{agent_role}", answer, "decision")
             self.console.log(f"[cyan]Recorded guidance for {agent_role}.[/cyan]")
 
+    async def _reviewer_preflight(self) -> bool:
+        """Smoke-test that the reviewer model returns a valid verdict on a trivial fixture.
+
+        Returns True when the reviewer submitted a structured verdict (the tool contract works),
+        False when it failed to — in which case the run should abort before any phase rather than
+        loop the architect↔reviewer death-spiral (F2). Skippable via
+        ``AGENTFORGE_SKIP_REVIEWER_PREFLIGHT=1`` for trusted setups.
+        """
+        if os.getenv("AGENTFORGE_SKIP_REVIEWER_PREFLIGHT", "").strip().lower() in ("1", "true", "yes"):
+            return True
+
+        self.console.log("[cyan]Reviewer preflight: checking the reviewer can emit a verdict…[/cyan]")
+        fixture_path = "handoff/_preflight_fixture.md"
+        await self.artifacts.write(
+            fixture_path,
+            "# Preflight Fixture\n\nThis file exists only to test the review tool contract.\n"
+            "It trivially meets its one-line brief. Approve it.\n",
+        )
+        try:
+            verdict = await self.reviewer.review(
+                phase_role="preflight",
+                summary="Trivial fixture that meets its brief.",
+                files=[fixture_path],
+                brief="Confirm this one-line fixture file exists and is non-empty, then submit a verdict.",
+            )
+        except Exception as e:  # noqa: BLE001 — preflight must surface any reviewer failure clearly
+            self.console.print(Panel(
+                Text(
+                    f"Reviewer preflight failed to run: {e}\n\n"
+                    "The reviewer model could not complete a trivial review. Aborting before the "
+                    "run wastes model calls.",
+                    style="bold red",
+                ),
+                title="[bold red]Reviewer Preflight Failed[/bold red]",
+                border_style="red",
+            ))
+            _lead_log.warning("reviewer_preflight error=%s", e)
+            return False
+
+        if verdict.get("submitted"):
+            self.console.log("[green]Reviewer preflight passed.[/green]")
+            return True
+
+        reviewer_model = ""
+        try:
+            from .base_agent import ollama_model_for_role, llm_provider
+
+            reviewer_model = ollama_model_for_role("reviewer") if llm_provider() == "ollama" else ""
+        except Exception:  # noqa: BLE001
+            pass
+        hint = (
+            f"The reviewer model{f' ({reviewer_model})' if reviewer_model else ''} did not call "
+            "submit_review on a trivial fixture — it cannot follow the structured-verdict tool "
+            "contract. Every artifact would be force-rejected and the run would never converge.\n\n"
+            "Use a stronger, tool-capable model for the reviewer role, e.g.\n"
+            "  AGENTFORGE_OLLAMA_MODEL_REVIEWER=qwen2.5:14b-instruct\n"
+            "(see agentforge-failure.md). Set AGENTFORGE_SKIP_REVIEWER_PREFLIGHT=1 to bypass."
+        )
+        self.console.print(Panel(
+            Text(hint, style="bold red"),
+            title="[bold red]Reviewer Preflight Failed[/bold red]",
+            border_style="red",
+        ))
+        _lead_log.warning("reviewer_preflight failed model=%s", reviewer_model)
+        return False
+
+    async def _grounding_gap(self, agent_role: str, artifact: dict) -> list[str]:
+        """Return salient goal terms missing from a PM/architect artifact (off-domain drift).
+
+        Only PM and architect spec documents are graded — they author against the goal directly.
+        Returns an empty list when grounded, the gate does not apply, or it is disabled via
+        ``AGENTFORGE_SKIP_GROUNDING=1``.
+        """
+        if agent_role not in ("pm", "architect"):
+            return []
+        if os.getenv("AGENTFORGE_SKIP_GROUNDING", "").strip().lower() in ("1", "true", "yes"):
+            return []
+        if not self._goal.strip():
+            return []
+
+        from core.grounding import grounding_gap
+
+        artifact_path = artifact.get("primary_path", artifact.get("path", ""))
+        if not artifact_path:
+            return []
+        content = await self.artifacts.read(artifact_path)
+        if content.startswith("[File not found:") or content.startswith("[Access denied:"):
+            return []
+        return grounding_gap(self._goal, content)
+
     async def _review_artifact(self, agent_role: str, artifact: dict, attempt: int) -> bool:
         """Consult the independent Reviewer and act on its verdict.
 
@@ -381,6 +482,31 @@ class LeadAgent(BaseAgent):
         artifact_path = artifact.get("primary_path", artifact.get("path", ""))
         files_written = artifact.get("files", []) or ([artifact_path] if artifact_path else [])
         summary = artifact.get("summary", "")
+
+        # Goal-grounding gate: reject off-domain drift before spending a reviewer call (F1).
+        missing = await self._grounding_gap(agent_role, artifact)
+        if missing:
+            shown = ", ".join(missing[:8]) + (" …" if len(missing) > 8 else "")
+            notes = (
+                f"Off-domain: the artifact does not reference the goal's named entities "
+                f"({shown}). Rewrite it for the actual sprint goal — do not substitute a generic "
+                f"or unrelated product. Reference the specific names, files, and identifiers in the goal."
+            )
+            self._last_review_summary = "Rejected by goal-grounding gate (off-domain)."
+            emit("review_verdict", role=agent_role, decision="reject", attempt=attempt + 1)
+            await self.bus.publish(Message(
+                type=MessageType.ARTIFACT_REJECTED,
+                sender="lead",
+                recipient=agent_role,
+                payload={"agent": agent_role, "artifact_name": artifact_path, "revision_notes": notes},
+                priority=1,
+            ))
+            self.console.log(
+                f"[yellow]Grounding gate rejected {agent_role} artifact "
+                f"({len(missing)} goal terms missing)[/yellow]"
+            )
+            _lead_log.warning("grounding_gate_reject role=%s missing=%s", agent_role, missing[:8])
+            return False
 
         self.console.log(
             f"[cyan]Reviewer auditing {agent_role} artifact (attempt {attempt + 1}): {summary}[/cyan]"
