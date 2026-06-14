@@ -123,10 +123,37 @@ uv run python main.py --resume --goal "…"
 | `--auto-approve` | — | with `--deploy-gate`, approve without prompting |
 | `--deploy-commit` | `AGENTFORGE_DEPLOY_COMMIT=1` | commit generated `workspace/dailyease` to its own git repo |
 | `--plan-gate` | `AGENTFORGE_PLAN_GATE=1` | backend plan → Lead confirm/redirect before code |
+| `--adaptive` | `AGENTFORGE_ADAPTIVE=1` | agentic mode: Lead plans phases from the goal, re-routes on outcomes, self-checks the goal is met |
 | `--resume` | — | skip phases already completed for the same goal |
 
 Always on: independent reviewer, scope lock (`reports/known_gaps.md`), escalation channel, selective
 context. See **[USAGE.md](docs/USAGE.md)** for full details and `--dry-run` to preview any combination.
+
+### Agentic mode (`--adaptive`)
+
+By default AgentForge runs a **fixed pipeline** (the preset's phases, in order). `--adaptive` turns the
+Lead into a planner that *adapts* — the difference between a multi-agent script and an agentic system:
+
+```bash
+# Lead plans the phases for the goal, re-routes on failures, and checks the goal is met
+uv run python main.py --adaptive --preset factory \
+  --goal "Build a predictive-maintenance service for CNC machines"
+```
+
+What changes when it's on:
+
+- **Plan from the goal** — the Lead proposes the phase sequence (seeded by the preset) instead of
+  running a hardcoded list.
+- **Re-route on outcomes** — when a phase ends with unresolved review findings or an escalation, the
+  Lead can insert one focused follow-up phase next (e.g. route a QA-found defect back to Backend).
+  Bounded by a replanning budget so it can never loop forever.
+- **Goal self-check** — before declaring "Sprint Complete", the Lead verifies the accepted artifacts
+  satisfy the goal and enqueues one bounded remediation round if they don't.
+
+Independently, every **builder** (Backend, Data Engineer, ML Engineer) now has an **act→observe loop**:
+they can call `run_tests` / `run_lint` (the project profile's configured commands) to execute their own
+code, read the failures, fix the cause, and re-run — not just write code blind. Only profile-configured
+commands run; the model never gets arbitrary shell.
 
 ## Troubleshooting (quick)
 

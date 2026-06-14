@@ -70,7 +70,9 @@ def build_prompt(profile: Profile, *, sprint_goal: str, data_content: str, req_c
         f"missing / out-of-range values explicitly.\n"
         f"5. A test proving the evaluation is reproducible and serving rejects malformed input.\n\n"
         f"Fit transforms on train only, reuse the exact features at serving, and tune the decision "
-        f"threshold to the failure mode. Reply without a tool call only when all files are written."
+        f"threshold to the failure mode. After writing, call run_tests to execute the evaluation/serving "
+        f"tests — read any failures, fix the cause, and run_tests again until green (or you have done all "
+        f"you can). Reply without a tool call only when all files are written and verified."
     )
 
 
@@ -127,6 +129,7 @@ class MLEngineerAgent(BaseAgent):
             tools=_TOOLS,
             max_steps=30,
             read_tools=True,
+            exec_tools=True,
         )
 
         if not written_files:
@@ -173,14 +176,16 @@ class MLEngineerAgent(BaseAgent):
             user_message=(
                 f"Revise the ML layer based on this feedback:\n{notes}\n\n"
                 f"Files already written:\n{files_summary}\n\n"
-                f"Write corrected files using write_file (one call per file). "
-                f"Reply without a tool call only when all fixes are written."
+                f"Write corrected files using write_file (one call per file), then call run_tests to "
+                f"confirm the evaluation/serving passes. "
+                f"Reply without a tool call only when all fixes are written and verified."
             ),
             tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=_TOOLS,
             max_steps=30,
             read_tools=True,
+            exec_tools=True,
         )
 
         await self.bus.publish(Message(

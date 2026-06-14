@@ -471,6 +471,35 @@ _GREP_CODE_TOOL = {
 
 _READ_TOOLS = [_READ_FILE_TOOL, _LIST_FILES_TOOL, _GREP_CODE_TOOL]
 
+# --- Execution tools: the act→observe loop that makes a worker agentic --------------
+#
+# Security note: we deliberately expose ONLY the operator-configured profile commands
+# (``profile.verify_cmd`` / ``profile.lint_cmd``), never an arbitrary shell string the
+# model supplies. This gives agents a real perceive→act→observe→adapt loop (write code →
+# run it → read failures → fix → re-run) without handing an LLM arbitrary command
+# execution. The command is fixed by the project profile, not by tool input.
+_RUN_TESTS_TOOL = {
+    "name": "run_tests",
+    "description": (
+        "Run the project's configured test command (from the active profile, e.g. pytest) in the "
+        "code root and return the captured output. Use this to confirm your changes actually pass "
+        "before you finish: read the failures, fix the cause, then call run_tests again. "
+        "Takes no arguments — the command is fixed by the project profile."
+    ),
+    "input_schema": {"type": "object", "properties": {}, "required": []},
+}
+
+_RUN_LINT_TOOL = {
+    "name": "run_lint",
+    "description": (
+        "Run the project's configured lint command (from the active profile, if any) in the code "
+        "root and return the output. Fix reported issues, then re-run. Takes no arguments."
+    ),
+    "input_schema": {"type": "object", "properties": {}, "required": []},
+}
+
+_EXEC_TOOLS = [_RUN_TESTS_TOOL, _RUN_LINT_TOOL]
+
 
 _SCOPE_LOCK_NOTE = (
     "\n\nScope lock: do exactly this task — no more. If you find anything outside its scope "
@@ -846,6 +875,53 @@ class BaseAgent(ABC):
         glob = (tool_input.get("glob") or "*").strip() or "*"
         return self.artifacts.grep(pattern, subdir, glob)
 
+    def _exec_root(self, profile: Any):
+        """Resolve the directory the verify/lint command runs in for this run.
+
+        Mirrors ``LeadAgent._deploy_target``: the DailyEase greenfield app lives under
+        ``workspace/dailyease/``, so run there when that is the active profile; any other
+        profile (``--target-repo`` / discovered) runs at the code root directly.
+        """
+        from core.profile import DEFAULT_PROFILE
+
+        code_root = self.artifacts.WORKSPACE
+        if profile.app_root == DEFAULT_PROFILE.app_root and (code_root / DEFAULT_PROFILE.app_root).is_dir():
+            return code_root / DEFAULT_PROFILE.app_root
+        return code_root
+
+    async def _run_tests_handler(self, tool_input: dict) -> str:
+        """Run the profile's verify command and feed the captured output back to the agent."""
+        from core.paths import METADATA_ROOT
+        from core.profile import load_profile
+        from core import deploy
+
+        profile = load_profile(self.artifacts.WORKSPACE, METADATA_ROOT)
+        root = self._exec_root(profile)
+        status, detail = await deploy.run_verify(root, profile.verify_cmd)
+        emit("pytest_result", role=self.role, status=status, command=" ".join(profile.verify_cmd))
+        self.console.log(f"[dim cyan]{self.role}[/dim cyan] run_tests → {status}")
+        tail = detail.strip()
+        if len(tail) > 4000:
+            tail = tail[-4000:]
+        return f"[{status}] `{' '.join(profile.verify_cmd)}`\n{tail or '(no output)'}"
+
+    async def _run_lint_handler(self, tool_input: dict) -> str:
+        """Run the profile's lint command (if any) and feed the output back to the agent."""
+        from core.paths import METADATA_ROOT
+        from core.profile import load_profile
+        from core import deploy
+
+        profile = load_profile(self.artifacts.WORKSPACE, METADATA_ROOT)
+        if not profile.lint_cmd:
+            return "No lint command is configured for this project profile; skip linting and continue."
+        root = self._exec_root(profile)
+        status, detail = await deploy.run_verify(root, profile.lint_cmd)
+        self.console.log(f"[dim cyan]{self.role}[/dim cyan] run_lint → {status}")
+        tail = detail.strip()
+        if len(tail) > 4000:
+            tail = tail[-4000:]
+        return f"[{status}] `{' '.join(profile.lint_cmd)}`\n{tail or '(no output)'}"
+
     async def run_tool_loop(
         self,
         user_message: str,
@@ -855,6 +931,7 @@ class BaseAgent(ABC):
         max_steps: int = 16,
         scope_lock: bool = True,
         read_tools: bool = False,
+        exec_tools: bool = False,
     ) -> dict[str, Any]:
         """Multi-turn agentic loop: call → execute tools → feed results back → repeat.
 
@@ -871,6 +948,10 @@ class BaseAgent(ABC):
         When ``read_tools`` is true, ``read_file`` / ``list_files`` / ``grep_code`` are injected so
         implementation agents can inspect existing code before patching (bug-find / refactor).
 
+        When ``exec_tools`` is true, ``run_tests`` / ``run_lint`` are injected so builder agents can
+        execute the project's configured verify/lint commands and iterate on real failures
+        (the act→observe loop). Only profile-configured commands run — never arbitrary shell.
+
         Returns ``{"final_text", "tool_calls", "results", "steps", "stop"}``.
         """
         effective_tools = list(tools or [])
@@ -882,6 +963,12 @@ class BaseAgent(ABC):
             handlers.setdefault("read_file", self._read_file_handler)
             handlers.setdefault("list_files", self._list_files_handler)
             handlers.setdefault("grep_code", self._grep_code_handler)
+        if exec_tools:
+            for tool_def in _EXEC_TOOLS:
+                if not any(t.get("name") == tool_def["name"] for t in effective_tools):
+                    effective_tools.append(tool_def)
+            handlers.setdefault("run_tests", self._run_tests_handler)
+            handlers.setdefault("run_lint", self._run_lint_handler)
         if scope_lock:
             if not any(t.get("name") == "log_known_gap" for t in effective_tools):
                 effective_tools.append(_LOG_KNOWN_GAP_TOOL)

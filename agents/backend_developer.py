@@ -111,7 +111,9 @@ def build_prompt(profile: Profile, *, plan_notes: str, sprint_goal: str,
         f"Write your changes under {profile.app_root}/ using write_file (one call per file), "
         f"matching the existing style and using {stack} for tech choices. "
         f"Keep changes scoped to the task. "
-        f"Reply without a tool call only when all changes are written."
+        f"After writing, call run_tests to confirm the change passes — read any failures, fix the "
+        f"cause, and run_tests again until it is green (or you have done all you can). "
+        f"Reply without a tool call only when all changes are written and verified."
     )
 
 
@@ -184,6 +186,7 @@ class BackendDeveloperAgent(BaseAgent):
             tools=_TOOLS,
             max_steps=40,
             read_tools=True,
+            exec_tools=True,
         )
 
         primary_path = written_files[0] if written_files and not checklist else "dailyease/main.py"
@@ -263,14 +266,16 @@ class BackendDeveloperAgent(BaseAgent):
             user_message=(
                 f"Revise the implementation based on this feedback:\n{notes}\n\n"
                 f"Files already written:\n{files_summary}\n\n"
-                f"Write corrected files using write_file (one call per file). "
-                f"Reply without a tool call only when all fixes are written."
+                f"Write corrected files using write_file (one call per file), then call run_tests to "
+                f"confirm the fix passes before finishing. "
+                f"Reply without a tool call only when all fixes are written and verified."
             ),
             tool_handlers={"write_file": write_file_handler},
             dynamic_context=context,
             tools=_TOOLS,
             max_steps=40,
             read_tools=True,
+            exec_tools=True,
         )
 
         await self.bus.publish(Message(
