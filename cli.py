@@ -171,7 +171,9 @@ async def _run_cycle(
     plan_gate: bool = False,
     resume: bool = False,
     strict_review: bool = False,
-) -> None:
+    allow_quality_debt: bool = False,
+) -> bool:
+    """Returns True if the deploy was recorded, False if fail-closed (blocked/declined)."""
     console = Console()
 
     from core.memory import init_db
@@ -209,8 +211,9 @@ async def _run_cycle(
         if role != "lead"
     ]
 
+    deploy_ok = True
     try:
-        await agents_map["lead"].run_development_cycle(
+        deploy_ok = await agents_map["lead"].run_development_cycle(
             goal,
             phases=phases,
             deploy_gate=deploy_gate,
@@ -220,6 +223,7 @@ async def _run_cycle(
             plan_gate=plan_gate,
             resume=resume,
             strict_review=strict_review,
+            allow_quality_debt=allow_quality_debt,
         )
     finally:
         for role in [r for r in agents_map if r != "lead"]:
@@ -231,6 +235,8 @@ async def _run_cycle(
                 priority=1,
             ))
         await asyncio.gather(*worker_tasks, return_exceptions=True)
+
+    return deploy_ok
 
     if skip_summary:
         return
@@ -342,8 +348,15 @@ def main() -> None:
     parser.add_argument(
         "--strict-review",
         action="store_true",
-        help="Block the deploy when any unresolved review finding (quality debt) remains, instead "
-        "of shipping with debt flagged (env: AGENTFORGE_STRICT_REVIEW=1)",
+        help="Deprecated/no-op: blocking on unresolved review findings is now the default "
+        "(env: AGENTFORGE_STRICT_REVIEW=1)",
+    )
+    parser.add_argument(
+        "--allow-quality-debt",
+        action="store_true",
+        help="Ship even when artifacts were force-accepted with unresolved review findings "
+        "(quality debt), flagging the debt instead of failing closed "
+        "(env: AGENTFORGE_ALLOW_QUALITY_DEBT=1)",
     )
     parser.add_argument(
         "--resume",
@@ -476,9 +489,10 @@ def main() -> None:
     deploy_commit = args.deploy_commit or _env_flag("AGENTFORGE_DEPLOY_COMMIT")
     plan_gate = args.plan_gate or _env_flag("AGENTFORGE_PLAN_GATE")
     strict_review = args.strict_review or _env_flag("AGENTFORGE_STRICT_REVIEW")
+    allow_quality_debt = args.allow_quality_debt or _env_flag("AGENTFORGE_ALLOW_QUALITY_DEBT")
 
     try:
-        asyncio.run(_run_cycle(
+        deploy_ok = asyncio.run(_run_cycle(
             goal_text,
             phases,
             skip_summary=args.skip_summary,
@@ -489,7 +503,12 @@ def main() -> None:
             plan_gate=plan_gate,
             resume=args.resume,
             strict_review=strict_review,
+            allow_quality_debt=allow_quality_debt,
         ))
+        if not deploy_ok:
+            # Fail closed: blocked or declined deploy must surface as a non-zero exit so
+            # automation and host assistants never read a flagged run as success.
+            sys.exit(2)
     except LLMUnavailableError as e:
         console.print(Panel(
             f"[bold]{e.provider} is unreachable.[/bold]\n"
