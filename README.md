@@ -4,19 +4,27 @@
 
 **Repository:** [github.com/vgandhi1/agent-forge](https://github.com/vgandhi1/agent-forge) · **License:** [MIT](LICENSE)
 
-Multi-agent pipeline that builds a real app (**DailyEase**, a FastAPI service) end to end. A **Lead**
-orchestrator drives a team — PM, Architect, Backend, QA, DevOps — and an independent **Reviewer** gates
-every artifact. All output lands under `workspace/`.
+Multi-agent **software-engineering orchestrator** that builds a real app (**DailyEase**, a FastAPI
+service) end to end — or operates on your existing repo via `--target-repo`. A **Lead** orchestrator
+drives a team — PM, Architect, Backend, QA, DevOps, plus Data/ML Engineers — and an independent
+**Reviewer** gates every artifact. All greenfield output lands under `workspace/`.
 
 ```
 PM → Architect → Backend → QA → DevOps  →  deploy gate
         every phase: Reviewer audits the real files before the Lead accepts it
+   with --adaptive, the Lead plans the phases, re-routes on failures, and goal-checks
 ```
 
 **What makes it more than a prompt chain:** a multi-turn tool loop (agents finish large jobs across
-turns), an independent reviewer that reads the actual files (silence ≠ approval), scope lock with a
-deferred Known-Gaps log, an escalation channel for ambiguity, and an optional deploy gate
-(verify → human sign-off → commit). Runs on **Anthropic** or local **Ollama**.
+turns), builders that **run their own tests and self-correct** (`run_tests`/`run_lint` → read failures
+→ surgical `edit_file` → re-run), an independent reviewer that reads the actual files (silence ≠
+approval), scope lock with a deferred Known-Gaps log, an escalation channel for ambiguity, context-decay
+guards, and an optional deploy gate (verify → human sign-off → commit). Runs on **Anthropic** or local
+**Ollama**.
+
+> 📚 **New to agentic systems?** Start with the **[interactive learning module](docs/learn/agentic-systems.html)**
+> — theory + the practical AgentForge implementation, with a loop simulator, hands-on labs, and a quiz.
+> Once Pages is enabled it's live at **https://vgandhi1.github.io/agent-forge/**.
 
 > **Dual-agent contract:** AgentForge runs its **own** LLM pass. Your assistant should **not**
 > duplicate implementation work — only launch, monitor, and summarize.
@@ -157,6 +165,31 @@ commands run; the model never gets arbitrary shell. For changes to files that al
 **surgical `edit_file` edits** (anchored search/replace, path-validated to the code root) instead of
 rewriting whole files — safer and cheaper on a real `--target-repo`.
 
+## Learn the concepts (interactive)
+
+A self-contained, multi-page **learning module** lives in **[`docs/learn/`](docs/learn/)** — open
+**[`docs/learn/agentic-systems.html`](docs/learn/agentic-systems.html)** in a browser (or serve the
+folder). It teaches agentic systems from two angles:
+
+| Part | Page | Covers |
+|------|------|--------|
+| Home | `agentic-systems.html` | What "agentic" means, theory↔practice framing, curriculum map |
+| 01 · Theory | `theory.html` | The loop (interactive simulator), tools, planning, memory, multi-agent, guardrails, evaluation |
+| 02 · In AgentForge | `practice.html` | Each idea mapped to the real code in this repo |
+| 03 · Labs | `labs.html` | Six copyable CLI exercises |
+| 04 · Quiz | `quiz.html` | A 7-question knowledge check + glossary |
+
+Serve it locally, or read it on GitHub Pages once enabled:
+
+```bash
+cd docs/learn && python3 -m http.server 8000   # → http://localhost:8000/
+```
+
+> **Publishing:** [`.github/workflows/pages.yml`](.github/workflows/pages.yml) deploys it to GitHub
+> Pages on every push to `main`. One-time setup — repo **Settings → Pages → Source = "GitHub Actions"**
+> (the workflow also self-enables Pages via `configure-pages`). Live URL:
+> **https://vgandhi1.github.io/agent-forge/**.
+
 ## Troubleshooting (quick)
 
 Missing packages → run `uv sync` (or `pip install -r requirements.txt`). API errors → set `ANTHROPIC_API_KEY` in `.env`. **Details:** [USAGE.md](docs/USAGE.md) §7.
@@ -167,8 +200,9 @@ Missing packages → run `uv sync` (or `pip install -r requirements.txt`). API e
 - **[docs/running-with-ai-clis.md](docs/running-with-ai-clis.md)** — drive AgentForge from any AI coding assistant (Claude Code, Cursor, Codex, …), **or with no assistant** from a plain terminal or VS Code Tasks  
 - **[docs/ollama.md](docs/ollama.md)** — run on local models; Windows-Ollama + WSL setup, model choice, diagnostics  
 - **[docs/agents_plan.md](docs/agents_plan.md)** — architecture, env var table, deployment phases  
-- **[docs/evaluation.md](docs/evaluation.md)** — 9-step agent-quality roadmap mapped to AgentForge presets, gates, and metrics  
-- **[evals/README.md](evals/README.md)** — fixture-based pipeline eval suite (`run_evals.py`) and scenario contracts  
+- **[docs/learn/](docs/learn/)** — interactive learning module: agentic-systems theory + AgentForge practice ([agentic-systems.html](docs/learn/agentic-systems.html))  
+- **[docs/evaluation.md](docs/evaluation.md)** — agent-quality roadmap + the LLM-as-a-Judge layer, mapped to presets, gates, and metrics  
+- **[evals/README.md](evals/README.md)** — fixture-based pipeline eval suite (`run_evals.py`) + LLM-as-a-Judge (`--judge`) and scenario contracts  
 - **[docs/github-repository.md](docs/github-repository.md)** — GitHub description, topics, `gh repo create`, public vs private  
 
 Claude Code shortcut: [.claude/commands/agentforge.md](.claude/commands/agentforge.md)
