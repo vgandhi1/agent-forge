@@ -199,6 +199,13 @@ class LeadAgent(BaseAgent):
         self._verify_fn = self._default_verify
         # Mid-sprint escalation pause — overridable in tests. Default prompts on a TTY.
         self._escalation_pause_fn = self._default_escalation_pause
+        # Safe-pause timeout: if no operator responds to a mid-sprint escalation within this many
+        # seconds, default to deferring to the deploy gate instead of blocking the run forever.
+        self._escalation_timeout = float(os.getenv("AGENTFORGE_ESCALATION_TIMEOUT", "300"))
+        # Blocking guidance reader (overridable in tests). Real impl reads one line from stdin.
+        self._read_guidance = self._blocking_read_guidance
+        # Last-reviewed content per file, for diff-only reviews on revision attempts (context-saver).
+        self._reviewed_snapshots: dict[str, str] = {}
 
     async def run(self) -> None:
         pass  # Lead is driven by run_development_cycle, not the message loop
@@ -496,8 +503,18 @@ class LeadAgent(BaseAgent):
         if self._deploy_gate:
             await self._escalation_pause_fn(agent_role, question)
 
+    @staticmethod
+    def _blocking_read_guidance() -> str:
+        """Read one line of operator guidance from stdin (blocks until Enter). Overridable in tests."""
+        return input("Guidance (or Enter): ").strip()
+
     async def _default_escalation_pause(self, agent_role: str, question: str) -> None:
-        """Interactive mid-sprint pause. Without a TTY, record and continue (no deadlock)."""
+        """Interactive mid-sprint pause with a safe-pause timeout.
+
+        Without a TTY, record and continue (no deadlock). With a TTY, wait up to
+        ``self._escalation_timeout`` seconds for operator guidance; if none arrives, default to a
+        safe pause (defer to the deploy gate) instead of burning idle compute waiting forever.
+        """
         if not sys.stdin.isatty():
             self.console.log(
                 "[dim]Escalation noted (no interactive terminal) — will surface at the deploy gate.[/dim]"
@@ -506,14 +523,32 @@ class LeadAgent(BaseAgent):
         self.console.print(Panel(
             Text(
                 f"{agent_role} escalated a decision:\n\n{question}\n\n"
-                "Enter guidance for the team, or press Enter to defer to the deploy gate.",
+                f"Enter guidance for the team, or press Enter to defer to the deploy gate "
+                f"(auto-defers after {int(self._escalation_timeout)}s).",
                 style="bold magenta",
             ),
             title="[bold magenta]Escalation — sprint paused[/bold magenta]",
             border_style="magenta",
         ))
         loop = asyncio.get_event_loop()
-        answer = await loop.run_in_executor(None, lambda: input("Guidance (or Enter): ").strip())
+        try:
+            answer = await asyncio.wait_for(
+                loop.run_in_executor(None, self._read_guidance),
+                timeout=self._escalation_timeout,
+            )
+        except asyncio.TimeoutError:
+            # Safe pause: no human in the loop within the window — defer rather than deadlock.
+            self.console.log(
+                f"[yellow]No operator response within {int(self._escalation_timeout)}s — "
+                f"safe-pausing; escalation deferred to the deploy gate.[/yellow]"
+            )
+            await self.memory.remember(
+                f"escalation_timeout_{agent_role}",
+                f"no operator response within {int(self._escalation_timeout)}s; safe-paused and "
+                f"deferred to the deploy gate",
+                "decision",
+            )
+            return
         if answer:
             await self.memory.remember(f"escalation_guidance_{agent_role}", answer, "decision")
             self.console.log(f"[cyan]Recorded guidance for {agent_role}.[/cyan]")
@@ -761,11 +796,43 @@ class LeadAgent(BaseAgent):
                 flagged.append((path, reason))
         return flagged
 
+    async def _collect_diffs(self, files: list[str], *, max_chars: int = 6000) -> str:
+        """Build a bounded unified diff of ``files`` against the last-reviewed snapshot.
+
+        Updates the snapshot to the current content as a side effect. Returns "" when nothing
+        changed or no prior snapshot exists (so the first review of a file is always a full read).
+        """
+        from core.diffs import unified_diff
+
+        chunks: list[str] = []
+        budget = max_chars
+        for path in files:
+            if not path:
+                continue
+            content = await self.artifacts.read(path)
+            if content.startswith("[File not found:") or content.startswith("[Access denied:"):
+                continue
+            prior = self._reviewed_snapshots.get(path)
+            self._reviewed_snapshots[path] = content
+            if prior is None:
+                continue  # first time we see this file — no diff to show
+            d = unified_diff(prior, content, path, max_chars=min(4000, budget))
+            if d:
+                chunks.append(d)
+                budget -= len(d)
+                if budget <= 0:
+                    break
+        return "\n".join(chunks)
+
     async def _review_artifact(self, agent_role: str, artifact: dict, attempt: int) -> bool:
         """Consult the independent Reviewer and act on its verdict.
 
         The Reviewer reads the actual files (not a truncated preview) and returns a
         structured decision. A missing verdict defaults to reject — silence is not approval.
+
+        On revision attempts (``attempt > 0``) in adaptive mode the Reviewer is additionally given a
+        unified diff of what changed since the last review, so it can focus on the fix instead of
+        re-reading whole files (it may still read_file for broader context).
         """
         artifact_path = artifact.get("primary_path", artifact.get("path", ""))
         files_written = artifact.get("files", []) or ([artifact_path] if artifact_path else [])
@@ -802,10 +869,17 @@ class LeadAgent(BaseAgent):
 
         context = await self._build_dynamic_context()
 
+        # Diff-only focus on revision attempts in adaptive mode: snapshot now, and on attempts after
+        # the first hand the Reviewer the unified diff so it judges the change, not the whole tree.
+        diffs = await self._collect_diffs(files_written)
+        if not (self._adaptive and attempt > 0):
+            diffs = ""
+
         verdict = await self.reviewer.review(
             phase_role=agent_role,
             summary=summary,
             files=files_written,
+            diffs=diffs,
             brief=self._current_brief,
             dynamic_context=context,
         )

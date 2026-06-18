@@ -153,7 +153,9 @@ What changes when it's on:
 Independently, every **builder** (Backend, Data Engineer, ML Engineer) now has an **act→observe loop**:
 they can call `run_tests` / `run_lint` (the project profile's configured commands) to execute their own
 code, read the failures, fix the cause, and re-run — not just write code blind. Only profile-configured
-commands run; the model never gets arbitrary shell.
+commands run; the model never gets arbitrary shell. For changes to files that already exist they make
+**surgical `edit_file` edits** (anchored search/replace, path-validated to the code root) instead of
+rewriting whole files — safer and cheaper on a real `--target-repo`.
 
 ## Troubleshooting (quick)
 

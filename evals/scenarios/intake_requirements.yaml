@@ -30,3 +30,17 @@ expected_verdict: null
 fixture: fixtures/intake_requirements
 # Live LLM execution is deferred; fixture/structural checks run today.
 live: false
+# LLM-as-a-Judge rubric (opt-in via `run_evals.py --judge`). Deterministic structural
+# checks above can't catch a silently degraded prompt; this scores artifact *quality*.
+judge_target: docs/requirements.md
+judge_threshold: 0.7
+rubric:
+  - key: completeness
+    description: >
+      All mandatory PM sections (users, problem, features, stories, API, NFRs, scope)
+      are present and substantive — not placeholders or one-liners.
+    weight: 2
+  - key: clarity
+    description: Requirements are specific, unambiguous, and individually testable.
+  - key: scope_discipline
+    description: An explicit Out of Scope section meaningfully bounds the work.

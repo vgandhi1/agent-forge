@@ -7,6 +7,63 @@ sections, prioritizing the ones relevant to the current task, and labels what it
 from __future__ import annotations
 
 
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate (~4 chars/token). Good enough for budget gating, not billing."""
+    return (len(text or "") + 3) // 4
+
+
+def rolling_state_block(
+    entries: dict[str, str],
+    *,
+    max_chars: int = 4000,
+    keep_recent: int = 12,
+) -> str:
+    """Pack an ordered decisions/state log into a bounded "tightly packed state block".
+
+    ``entries`` is chronological (dict insertion order; most recent last). When the full render
+    fits in ``max_chars`` it is returned verbatim. Otherwise the most recent ``keep_recent`` entries
+    are kept verbatim (recency matters most), as many older entries as the remaining budget allows
+    are kept truncated, and any further-back entries collapse into a single count line. This bounds
+    the cross-phase context replay that otherwise grows unbounded and triggers token exhaustion /
+    "lost in the middle" during long adaptive loops.
+    """
+    items = list(entries.items())
+    if not items:
+        return ""
+
+    def render(pairs: list[tuple[str, str]]) -> list[str]:
+        return [f"- {k}: {v}" for k, v in pairs]
+
+    full = "\n".join(render(items))
+    if len(full) <= max_chars:
+        return full
+
+    keep_recent = max(0, keep_recent)
+    recent = items[len(items) - keep_recent:] if keep_recent else []
+    older = items[: len(items) - len(recent)]
+    recent_lines = render(recent)
+
+    budget = max_chars - len("\n".join(recent_lines))
+    older_kept: list[str] = []
+    omitted = 0
+    for k, v in reversed(older):  # newest-older first
+        snippet = v[:80].rstrip()
+        line = f"- {k}: {snippet}" + ("…" if len(v) > 80 else "")
+        if budget - (len(line) + 1) > 0:
+            older_kept.append(line)
+            budget -= len(line) + 1
+        else:
+            omitted += 1
+    older_kept.reverse()
+
+    parts: list[str] = []
+    if omitted:
+        parts.append(f"- …[{omitted} earlier decision(s) condensed]")
+    parts.extend(older_kept)
+    parts.extend(recent_lines)
+    return "\n".join(parts)
+
+
 def _split_sections(text: str) -> list[str]:
     sections: list[str] = []
     current: list[str] = []

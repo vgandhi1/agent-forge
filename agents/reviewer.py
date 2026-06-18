@@ -106,11 +106,16 @@ class ReviewerAgent(BaseAgent):
         files: list[str],
         brief: str = "",
         dynamic_context: str = "",
+        diffs: str = "",
     ) -> dict[str, Any]:
         """Read the produced files and return a structured verdict.
 
         Returns ``{"decision", "summary", "must_fix", "should_fix", "escalation_question"}``.
         Defaults to ``reject`` if the model fails to submit a verdict — silence is not approval.
+
+        When ``diffs`` is provided (revision attempts in adaptive mode), the Reviewer is told to
+        focus on the unified diff of what changed and to read_file only for broader context — this
+        avoids re-reading whole files on every revision.
         """
         file_list = "\n".join(f"- {f}" for f in files) if files else "(no files reported)"
         verdict: dict[str, Any] = {}
@@ -131,10 +136,19 @@ class ReviewerAgent(BaseAgent):
             verdict.update(tool_input)
             return "Review recorded."
 
+        diff_block = ""
+        if diffs.strip():
+            diff_block = (
+                f"\nThis is a revision. Focus your review on what changed since the last review "
+                f"(unified diff below); read_file only if you need broader context to judge it:\n"
+                f"```diff\n{diffs}\n```\n\n"
+            )
+
         user_message = (
             f"Review the {phase_role} agent's artifact before it is accepted.\n\n"
             f"Task brief / phase objective:\n{brief or '(not provided)'}\n\n"
             f"Agent's own summary: {summary}\n\n"
+            f"{diff_block}"
             f"Files produced — read the ones you need with read_file. read_file returns a window "
             f"of numbered lines; pass offset to page through large files before judging.\n{file_list}\n\n"
             f"Judge spec compliance, drift, security, logic correctness, and standards. "

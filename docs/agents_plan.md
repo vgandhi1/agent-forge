@@ -326,7 +326,7 @@ echo "AGENTFORGE_THINKING=true" >> .env
 - [x] Agent eval suite (`evals/`, fixture-graded) + `docs/evaluation.md`; CI runs `run_evals.py`
 
 ### Phase 2 — Product Quality
-- [ ] Add web search tool so agents can look up latest API docs  *(deferred — Phase C; see `feedback.md` Part 8)*
+- [ ] Add web search tool so agents can look up latest API docs  *(deferred — Phase C)*
 - [x] Run pytest from QA agent (local subprocess, capped output)
 - [ ] Multi-sprint support: agents remember prior sprint decisions
 - [ ] Parallel agent execution where phases allow (e.g., docs + tests in parallel)  *(deferred — Phase C; needs workspace locking)*

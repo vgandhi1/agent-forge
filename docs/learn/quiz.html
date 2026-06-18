@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Knowledge Check &amp; Glossary · The Forge</title>
+<meta name="description" content="Test your understanding of agentic systems and AgentForge, with a glossary and source map." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800;900&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/forge.css" />
+</head>
+<body data-page="quiz">
+<div id="progress"></div>
+<div class="topbar"><div class="topwrap">
+  <a class="brand" href="agentic-systems.html"><span class="mark">AF</span>
+    <span><b>The Forge</b><small>Agentic Systems</small></span></a>
+  <nav class="tabsnav">
+    <a href="agentic-systems.html">Home</a>
+    <a href="theory.html">Theory</a>
+    <a href="practice.html">In AgentForge</a>
+    <a href="labs.html">Labs</a>
+    <a href="quiz.html" class="active">Quiz</a>
+  </nav>
+  <div class="ring-mini">
+    <svg width="40" height="40" viewBox="0 0 46 46" aria-hidden="true">
+      <circle cx="23" cy="23" r="19" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="5"/>
+      <circle id="ring" cx="23" cy="23" r="19" fill="none" stroke="url(#rg)" stroke-width="5"
+        stroke-linecap="round" stroke-dasharray="119.4" stroke-dashoffset="119.4" transform="rotate(-90 23 23)"/>
+      <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ff6a1a"/><stop offset="1" stop-color="#ffb04a"/></linearGradient></defs>
+    </svg>
+    <div class="rt">done<b id="pct">0%</b></div>
+  </div>
+</div></div>
+
+<div class="wrap">
+<header class="phead">
+  <div class="eyebrow">Part 04 · Check yourself</div>
+  <h1>Knowledge <span class="gl">check</span></h1>
+  <p class="lede">Seven questions spanning theory and AgentForge. Answer to reveal the reasoning.</p>
+</header>
+
+<section id="quizsec">
+  <div class="quiz" id="quiz"></div>
+  <div id="score"></div>
+  <label class="complete"><input type="checkbox" data-done="quiz" /> Mark Quiz complete</label>
+</section>
+
+<section id="glossary">
+  <div class="kicker">Appendix</div>
+  <h2>Glossary</h2>
+  <dl class="glossary">
+    <dt>Tool loop</dt><dd>The multi-turn call→act→observe cycle. → <code>BaseAgent.run_tool_loop</code></dd>
+    <dt>Grounding</dt><dd>Tying the agent to reality via tools so it verifies instead of asserting. → <code>exec_tools</code>, <code>phantom_imports</code></dd>
+    <dt>Adaptive / re-planning</dt><dd>Choosing &amp; revising the phase sequence at runtime. → <code>--adaptive</code>, <code>lead._plan_phases</code></dd>
+    <dt>Context budget</dt><dd>Curating working memory so the window doesn't overflow. → <code>rolling_state_block</code>, <code>_compact_messages</code></dd>
+    <dt>Scope lock</dt><dd>Deferring out-of-scope work to a Known-Gaps log instead of expanding the task.</dd>
+    <dt>Deploy gate</dt><dd>verify → human sign-off → commit. The brake before shipping.</dd>
+    <dt>Escalation</dt><dd>Routing a decision the agent shouldn't make to a human; safe-pauses on timeout.</dd>
+    <dt>Reviewer</dt><dd>An independent agent that reads the real files and returns approve/reject — silence ≠ approval.</dd>
+  </dl>
+  <div class="callout steel"><b>Read the source next.</b> <code>agents/base_agent.py</code> (loop) →
+  <code>agents/lead.py</code> (orchestration) → <code>agents/reviewer.py</code> (gate) →
+  <code>core/</code> (machinery). Roadmap: <code>improvement.md</code> · Overview:
+  <code>agent-forge-overview.md</code>.</div>
+  <label class="complete" style="opacity:.6;pointer-events:none">You've reached the end — nicely done.</label>
+</section>
+
+<div class="pager">
+  <a href="labs.html"><div class="dir">← Prev</div><div class="ti">Part 03 · Labs</div></a>
+  <a class="next" href="agentic-systems.html"><div class="dir">Back to →</div><div class="ti">Home</div></a>
+</div>
+
+<footer>
+  <div class="forge-rule" style="margin:0 0 22px"></div>
+  The Forge · a learning module for <a href="../../">AgentForge</a> ·
+  <a href="https://github.com/vgandhi1/agent-forge">source</a><br/>
+  <span style="color:var(--faint)">“An agent is a loop with a goal and the judgment to know when to stop.”</span>
+</footer>
+</div>
+<script src="assets/forge.js"></script>
+</body>
+</html>

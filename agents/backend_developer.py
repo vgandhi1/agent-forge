@@ -108,7 +108,9 @@ def build_prompt(profile: Profile, *, plan_notes: str, sprint_goal: str,
         f"Task: {task_description}\n\n"
         f"First, read the existing code: use read_file/list_files/grep_code to understand the "
         f"current layout, conventions, and the code you need to change before writing anything. "
-        f"Write your changes under {profile.app_root}/ using write_file (one call per file), "
+        f"For changes to files that already exist, prefer edit_file (a surgical, anchored "
+        f"search/replace) over rewriting the whole file; use write_file only for brand-new files. "
+        f"Write your changes under {profile.app_root}/, "
         f"matching the existing style and using {stack} for tech choices. "
         f"Keep changes scoped to the task. "
         f"After writing, call run_tests to confirm the change passes — read any failures, fix the "
@@ -187,7 +189,12 @@ class BackendDeveloperAgent(BaseAgent):
             max_steps=40,
             read_tools=True,
             exec_tools=True,
+            edit_tools=True,
         )
+
+        for edited in self._edited_files:
+            if edited not in written_files:
+                written_files.append(edited)
 
         primary_path = written_files[0] if written_files and not checklist else "dailyease/main.py"
 
@@ -266,7 +273,8 @@ class BackendDeveloperAgent(BaseAgent):
             user_message=(
                 f"Revise the implementation based on this feedback:\n{notes}\n\n"
                 f"Files already written:\n{files_summary}\n\n"
-                f"Write corrected files using write_file (one call per file), then call run_tests to "
+                f"For files that already exist, prefer edit_file (surgical search/replace) over a "
+                f"full rewrite; use write_file for new files. Then call run_tests to "
                 f"confirm the fix passes before finishing. "
                 f"Reply without a tool call only when all fixes are written and verified."
             ),
@@ -276,7 +284,12 @@ class BackendDeveloperAgent(BaseAgent):
             max_steps=40,
             read_tools=True,
             exec_tools=True,
+            edit_tools=True,
         )
+
+        for edited in self._edited_files:
+            if edited not in written_files:
+                written_files.append(edited)
 
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,

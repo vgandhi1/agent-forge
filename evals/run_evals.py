@@ -38,6 +38,20 @@ import yaml
 EVALS_DIR = Path(__file__).resolve().parent
 SCENARIOS_DIR = EVALS_DIR / "scenarios"
 
+# Make ``judge`` importable whether this file is run directly (`python evals/run_evals.py`)
+# or loaded via importlib spec (tests), where ``evals/`` may not be on ``sys.path``.
+if str(EVALS_DIR) not in sys.path:
+    sys.path.insert(0, str(EVALS_DIR))
+
+from judge import (  # noqa: E402  (path bootstrap must precede this import)
+    DEFAULT_THRESHOLD,
+    Completer,
+    JudgeError,
+    default_completer,
+    judge,
+    parse_criteria,
+)
+
 # Keys every scenario must define; ``str`` means required+typed, tuple means any-of.
 REQUIRED_KEYS: dict[str, Any] = {
     "name": str,
@@ -107,7 +121,66 @@ def validate_scenario(scenario: dict[str, Any]) -> list[str]:
             errors.append("fixture must be a string path under evals/")
         elif not (EVALS_DIR / fixture).is_dir():
             errors.append(f"fixture directory not found: {fixture}")
+    # Optional LLM-as-a-Judge rubric (only used with --judge).
+    rubric = scenario.get("rubric")
+    if rubric is not None:
+        if not isinstance(rubric, list):
+            errors.append("rubric must be a list of {key, description, weight?}")
+        else:
+            try:
+                parse_criteria(rubric)
+            except JudgeError as exc:
+                errors.append(f"invalid rubric: {exc}")
+    target = scenario.get("judge_target")
+    if target is not None and not isinstance(target, str):
+        errors.append("judge_target must be a string path")
+    threshold = scenario.get("judge_threshold")
+    if threshold is not None and not isinstance(threshold, (int, float)):
+        errors.append("judge_threshold must be a number")
     return errors
+
+
+def _judge_target(scenario: dict[str, Any]) -> str | None:
+    """The artifact the judge grades: explicit ``judge_target``, else first expected artifact."""
+    target = scenario.get("judge_target")
+    if isinstance(target, str):
+        return target
+    artifacts = scenario.get("expected_artifacts") or []
+    return artifacts[0] if artifacts else None
+
+
+def judge_scenario(
+    scenario: dict[str, Any],
+    grade_root: Path,
+    completer: Completer,
+    *,
+    default_threshold: float = DEFAULT_THRESHOLD,
+) -> tuple[bool, str]:
+    """Run the LLM-as-a-Judge for one scenario against ``grade_root``.
+
+    Returns ``(passed, message)``. Scenarios without a ``rubric`` are a no-op pass.
+    """
+    rubric = scenario.get("rubric")
+    if not rubric:
+        return True, "no rubric (skipped)"
+    target = _judge_target(scenario)
+    if not target:
+        return False, "rubric set but no judge_target / expected_artifacts to grade"
+    artifact = grade_root / target
+    if not artifact.exists():
+        return False, f"judge target not found: {target}"
+
+    criteria = parse_criteria(rubric)
+    threshold = float(scenario.get("judge_threshold", default_threshold))
+    text = artifact.read_text(encoding="utf-8", errors="replace")
+    result = judge(
+        scenario.get("goal", ""), target, text, criteria, completer, threshold=threshold
+    )
+    detail = ", ".join(f"{k}={v}" for k, v in result.scores.items())
+    verdict = "PASS" if result.passed else "FAIL"
+    return result.passed, (
+        f"judge {verdict} {result.weighted:.2f} (>= {threshold:.2f}) [{detail}]"
+    )
 
 
 def check_workspace(scenario: dict[str, Any], workspace: Path) -> list[str]:
@@ -131,11 +204,23 @@ def check_workspace(scenario: dict[str, Any], workspace: Path) -> list[str]:
     return failures
 
 
-def run(workspace: Path | None, scenarios_dir: Path | None = None) -> int:
+def run(
+    workspace: Path | None,
+    scenarios_dir: Path | None = None,
+    *,
+    use_judge: bool = False,
+    completer: Completer | None = None,
+    judge_threshold: float = DEFAULT_THRESHOLD,
+) -> int:
     """Validate all scenarios (and grade against ``workspace`` if given).
 
-    Returns a process exit code: 0 = all checks passed, 1 = at least one failure.
+    When ``use_judge`` is set, scenarios that declare a ``rubric`` are additionally graded
+    by the LLM-as-a-Judge (``completer`` is injectable for tests; defaults to the live
+    provider). Returns a process exit code: 0 = all checks passed, 1 = at least one failure.
     """
+    judge_fn: Completer | None = None
+    if use_judge:
+        judge_fn = completer or default_completer()
     try:
         scenarios = load_scenarios(scenarios_dir)
     except (yaml.YAMLError, ValueError) as exc:
@@ -174,6 +259,18 @@ def run(workspace: Path | None, scenarios_dir: Path | None = None) -> int:
                 print(f"FAIL  {name}: " + "; ".join(ws_failures))
                 continue
             print(f"PASS  {name}: schema + {source} artifacts")
+            if judge_fn is not None and scenario.get("rubric"):
+                try:
+                    ok, msg = judge_scenario(
+                        scenario, grade_root, judge_fn, default_threshold=judge_threshold
+                    )
+                except JudgeError as exc:
+                    failed += 1
+                    print(f"FAIL  {name}: judge error: {exc}")
+                    continue
+                print(f"      {name}: {msg}")
+                if not ok:
+                    failed += 1
         else:
             print(f"OK    {name}: schema valid (no fixture/--workspace; artifact checks skipped)")
 
@@ -200,8 +297,26 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Override the scenarios directory (default: evals/scenarios).",
     )
+    parser.add_argument(
+        "--judge",
+        action="store_true",
+        help="Also grade rubric-bearing scenarios with the LLM-as-a-Judge (costs tokens, "
+        "non-deterministic). Requires a configured provider/API key.",
+    )
+    parser.add_argument(
+        "--judge-threshold",
+        type=float,
+        default=DEFAULT_THRESHOLD,
+        help=f"Default pass threshold for judge scores 0..1 (default {DEFAULT_THRESHOLD}; "
+        "a scenario's judge_threshold overrides this).",
+    )
     args = parser.parse_args(argv)
-    return run(args.workspace, args.scenarios_dir)
+    return run(
+        args.workspace,
+        args.scenarios_dir,
+        use_judge=args.judge,
+        judge_threshold=args.judge_threshold,
+    )
 
 
 if __name__ == "__main__":

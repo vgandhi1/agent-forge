@@ -32,9 +32,12 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.25.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [".", "evals"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "live: tests that call a real LLM provider (opt-in; require AGENTFORGE_RUN_LIVE=1 and an API key)",
+]
 # Committed fixture repos under tests/fixtures/ contain their own test_*.py used by
 # integration tests (run via a separate pytest subprocess); don't collect them here.
 norecursedirs = ["fixtures", "*.egg", ".*", "build", "dist"]
