@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Forge — Agentic Systems: Theory &amp; Practice (AgentForge)</title>
+<meta name="description" content="An interactive, multi-part learning module on agentic systems — theory and the practical implementation inside AgentForge." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800;900&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/forge.css" />
+</head>
+<body data-page="home">
+<div id="progress"></div>
+<div class="topbar"><div class="topwrap">
+  <a class="brand" href="agentic-systems.html"><span class="mark">AF</span>
+    <span><b>The Forge</b><small>Agentic Systems</small></span></a>
+  <nav class="tabsnav">
+    <a href="agentic-systems.html" class="active">Home</a>
+    <a href="theory.html">Theory</a>
+    <a href="practice.html">In AgentForge</a>
+    <a href="labs.html">Labs</a>
+    <a href="quiz.html">Quiz</a>
+  </nav>
+  <div class="ring-mini">
+    <svg width="40" height="40" viewBox="0 0 46 46" aria-hidden="true">
+      <circle cx="23" cy="23" r="19" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="5"/>
+      <circle id="ring" cx="23" cy="23" r="19" fill="none" stroke="url(#rg)" stroke-width="5"
+        stroke-linecap="round" stroke-dasharray="119.4" stroke-dashoffset="119.4" transform="rotate(-90 23 23)"/>
+      <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ff6a1a"/><stop offset="1" stop-color="#ffb04a"/></linearGradient></defs>
+    </svg>
+    <div class="rt">done<b id="pct">0%</b></div>
+  </div>
+</div></div>
+
+<div class="wrap">
+<header class="phead hero">
+  <div class="eyebrow">From prompt chains → autonomous agents</div>
+  <h1>Build a system that <span class="gl">thinks in loops</span>, not in lines.</h1>
+  <p class="lede">A practical, multi-part guide to <em>agentic systems</em> — the <strong>theory</strong>
+  (planning, tool use, memory, reflection, multi-agent coordination) paired with a real
+  <strong>working implementation</strong> you can read and run: <b>AgentForge</b>.</p>
+  <div class="hero-meta">
+    <span class="chip">⏱ <b>~45&nbsp;min</b></span>
+    <span class="chip">📚 <b>2</b> tracks · theory &amp; practice</span>
+    <span class="chip">⚙ runnable <b>CLI labs</b></span>
+    <span class="chip">✅ <b>7-question</b> quiz</span>
+  </div>
+  <div class="forge-rule" style="margin-top:34px"></div>
+</header>
+
+<section id="what">
+  <div class="kicker">Start here</div>
+  <h2>What actually makes a system "agentic"?</h2>
+  <p class="lead">A chatbot answers. A <em>workflow</em> runs fixed steps. An <em>agentic system</em>
+  pursues a goal: it decides what to do next, acts through tools, observes the result, and adapts —
+  looping until the goal is met or it knows it is stuck. Four properties separate it from a script:</p>
+  <div class="grid g2">
+    <div class="def"><div class="ic">01</div><h4>Goal-directed autonomy</h4>
+      <p class="muted">Given an objective, it chooses steps itself rather than following a hard-coded list.</p></div>
+    <div class="def"><div class="ic">02</div><h4>Tool use / grounding</h4>
+      <p class="muted">It affects the real world — reading files, running tests, editing code — not just emitting text.</p></div>
+    <div class="def"><div class="ic">03</div><h4>Feedback &amp; adaptation</h4>
+      <p class="muted">It observes outcomes (a failing test, a reviewer rejection) and changes course.</p></div>
+    <div class="def"><div class="ic">04</div><h4>Bounded self-direction</h4>
+      <p class="muted">It knows when to stop, escalate, or defer — guardrails keep autonomy from becoming chaos.</p></div>
+  </div>
+  <div class="callout"><b>Mental model.</b> An agent = <code>while not done: state → decide → act →
+  observe</code>. Everything else — planning, memory, multi-agent orgs — is structure layered on that
+  loop to make it reliable at scale. This guide teaches each layer twice: the idea, then the code.</div>
+</section>
+
+<section id="howread">
+  <div class="kicker">How this guide works</div>
+  <h2>Theory on the left, the real code on the right</h2>
+  <p class="lead">Every concept is taught from two angles. Read the <b>Theory</b> track for the idea in the
+  abstract, then the <b>In AgentForge</b> track to see exactly where it lives in a production codebase.</p>
+  <div class="split">
+    <div class="th"><h4>// THEORY</h4>
+      <p>“An agent completes large jobs across <em>turns</em>: it proposes an action, the runtime
+      executes it, the result is fed back, and the loop repeats.”</p></div>
+    <div class="pr"><h4>// IN AGENTFORGE</h4>
+      <p><code>BaseAgent.run_tool_loop</code> implements exactly that — <code>call → execute tool →
+      append result → repeat</code>, with opt-in tool flags and a context circuit breaker.</p></div>
+  </div>
+</section>
+
+<section id="curriculum">
+  <div class="kicker">The curriculum</div>
+  <h2>Four parts — go in order, or jump in</h2>
+  <div class="curric">
+    <a class="ccard" href="theory.html">
+      <div class="pn">PART 01</div><h3>Theory</h3>
+      <p>The core loop (interactive), tool use, planning &amp; adaptive control, memory &amp; context,
+      multi-agent orgs, guardrails, and evaluation — framework-agnostic.</p>
+      <span class="go">Start the theory track →</span>
+    </a>
+    <a class="ccard" href="practice.html">
+      <div class="pn">PART 02</div><h3>In AgentForge</h3>
+      <p>Where each idea lives in the code: the architecture, the agent org, the tool loop,
+      <code>--adaptive</code> planning, context guards, and the guardrail defaults.</p>
+      <span class="go">See the implementation →</span>
+    </a>
+    <a class="ccard" href="labs.html">
+      <div class="pn">PART 03</div><h3>Hands-on labs</h3>
+      <p>Six copyable CLI exercises — preview a plan, run the org, debug your own repo, build a
+      factory pipeline, ship through the deploy gate.</p>
+      <span class="go">Open the labs →</span>
+    </a>
+    <a class="ccard" href="quiz.html">
+      <div class="pn">PART 04</div><h3>Knowledge check</h3>
+      <p>Seven questions with instant reasoning, plus a glossary and a map of where to read the source
+      next.</p>
+      <span class="go">Test yourself →</span>
+    </a>
+  </div>
+  <div class="callout steel"><b>Quick start.</b> <code>cd agent-forge &amp;&amp; uv sync</code>, set
+  <code>ANTHROPIC_API_KEY</code> (or <code>AGENTFORGE_LLM_PROVIDER=ollama</code>), then preview a run
+  with <code>uv run python main.py --preset full --adaptive --dry-run --goal "…"</code>. Full steps are
+  in the <a href="labs.html">Labs</a>.</div>
+  <label class="complete"><input type="checkbox" data-done="home" /> Mark this page complete</label>
+</section>
+
+<div class="pager">
+  <a class="empty" href="#">&nbsp;</a>
+  <a class="next" href="theory.html"><div class="dir">Next →</div><div class="ti">Part 01 · Theory</div></a>
+</div>
+
+<footer>
+  <div class="forge-rule" style="margin:0 0 22px"></div>
+  The Forge · a learning module for <a href="../../">AgentForge</a> ·
+  <a href="https://github.com/vgandhi1/agent-forge">source</a><br/>
+  <span style="color:var(--faint)">“An agent is a loop with a goal and the judgment to know when to stop.”</span>
+</footer>
+</div>
+<script src="assets/forge.js"></script>
+</body>
+</html>

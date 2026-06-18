@@ -57,15 +57,19 @@ def build_prompt(profile: Profile, *, sprint_goal: str, arch_content: str, req_c
         f"{req_block}"
         f"Task: {task_description}\n\n"
         f"First, inspect the repo: use read_file/list_files/grep_code to learn the existing layout, "
-        f"data sources, and conventions before writing anything.\n\n"
-        f"Then deliver, writing each file with write_file under {profile.app_root}/ using {stack}:\n"
+        f"data sources, and conventions before writing anything. For changes to files that already "
+        f"exist, prefer edit_file (surgical search/replace) over rewriting them; use write_file for "
+        f"new files.\n\n"
+        f"Then deliver, under {profile.app_root}/ using {stack}:\n"
         f"1. {_DESIGN_DOC} — sources (streaming + batch), explicit data contracts/schemas "
         f"(name, type, unit, range, nullability, keys), the pipeline DAG (extract → validate → "
         f"transform → load), the storage model (tables, partitioning by asset/line/time, retention), "
         f"and the data-quality rules.\n"
         f"2. Data-contract / schema definitions plus validation code that rejects (quarantines) bad rows.\n"
         f"3. Idempotent, restartable pipeline modules with clear extract/validate/transform/load stages.\n"
-        f"4. A test or sample fixture proving the validation rejects out-of-range / malformed rows.\n\n"
+        f"4. A test or sample fixture proving the validation rejects out-of-range / malformed rows — "
+        f"use generate_mock_data to create a standardized dummy dataset (sensor readings, batch "
+        f"records) to exercise the pipeline locally instead of hand-coding rows or using real data.\n\n"
         f"Make units explicit, keep pipelines replay-safe (a re-run must not double-load), and record "
         f"row/reject counts per run. After writing, call run_tests to execute the validation/pipeline "
         f"tests — read any failures, fix the cause, and run_tests again until green (or you have done "
@@ -125,7 +129,13 @@ class DataEngineerAgent(BaseAgent):
             max_steps=30,
             read_tools=True,
             exec_tools=True,
+            edit_tools=True,
+            mock_tools=True,
         )
+
+        for edited in self._edited_files:
+            if edited not in written_files:
+                written_files.append(edited)
 
         if not written_files:
             fallback = "# Data Engineering Design\n\n[Generated — no files emitted]\n"
@@ -171,7 +181,8 @@ class DataEngineerAgent(BaseAgent):
             user_message=(
                 f"Revise the data engineering layer based on this feedback:\n{notes}\n\n"
                 f"Files already written:\n{files_summary}\n\n"
-                f"Write corrected files using write_file (one call per file), then call run_tests to "
+                f"For files that already exist, prefer edit_file (surgical search/replace) over a full "
+                f"rewrite; use write_file for new files. Then call run_tests to "
                 f"confirm the pipeline/validation passes. "
                 f"Reply without a tool call only when all fixes are written and verified."
             ),
@@ -181,7 +192,13 @@ class DataEngineerAgent(BaseAgent):
             max_steps=30,
             read_tools=True,
             exec_tools=True,
+            edit_tools=True,
+            mock_tools=True,
         )
+
+        for edited in self._edited_files:
+            if edited not in written_files:
+                written_files.append(edited)
 
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,

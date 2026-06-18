@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>In AgentForge — Practical Implementation · The Forge</title>
+<meta name="description" content="How agentic theory is implemented inside AgentForge: the tool loop, adaptive planning, context guards, multi-agent org, and guardrails — with real code." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800;900&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/forge.css" />
+</head>
+<body data-page="practice">
+<div id="progress"></div>
+<div class="topbar"><div class="topwrap">
+  <a class="brand" href="agentic-systems.html"><span class="mark">AF</span>
+    <span><b>The Forge</b><small>Agentic Systems</small></span></a>
+  <nav class="tabsnav">
+    <a href="agentic-systems.html">Home</a>
+    <a href="theory.html">Theory</a>
+    <a href="practice.html" class="active">In AgentForge</a>
+    <a href="labs.html">Labs</a>
+    <a href="quiz.html">Quiz</a>
+  </nav>
+  <div class="ring-mini">
+    <svg width="40" height="40" viewBox="0 0 46 46" aria-hidden="true">
+      <circle cx="23" cy="23" r="19" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="5"/>
+      <circle id="ring" cx="23" cy="23" r="19" fill="none" stroke="url(#rg)" stroke-width="5"
+        stroke-linecap="round" stroke-dasharray="119.4" stroke-dashoffset="119.4" transform="rotate(-90 23 23)"/>
+      <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ff6a1a"/><stop offset="1" stop-color="#ffb04a"/></linearGradient></defs>
+    </svg>
+    <div class="rt">done<b id="pct">0%</b></div>
+  </div>
+</div></div>
+
+<div class="wrap">
+<header class="phead">
+  <div class="eyebrow">Part 02 · In AgentForge</div>
+  <h1>The theory, <span class="gl">in real code</span></h1>
+  <p class="lede">Each idea from <a href="theory.html">Part 01</a> mapped to where it actually lives in
+  <code>agent-forge/</code>. Click any snippet to copy it, then open the file alongside.</p>
+  <div class="jump">
+    <a href="#arch">Architecture</a>
+    <a href="#org">The org</a>
+    <a href="#looptools">Loop &amp; tools</a>
+    <a href="#adaptive">Adaptive planning</a>
+    <a href="#context">Context guards</a>
+    <a href="#guards">Guardrails</a>
+    <a href="#eval">Evaluation</a>
+    <a href="#modules">Core modules</a>
+  </div>
+</header>
+
+<section id="arch">
+  <div class="kicker">Overview</div>
+  <h2>What AgentForge is</h2>
+  <p class="lead">A multi-agent software-engineering orchestrator (Python 3.11+). A <b>Lead</b> drives a
+  team of specialists through a software lifecycle while an <b>independent Reviewer</b> audits the real
+  files at every phase. It builds greenfield apps <em>or</em> operates on an existing repo via
+  <code>--target-repo</code>.</p>
+  <div class="split">
+    <div class="th"><h4>// THEORY → goal-directed autonomy</h4>
+      <p>“Given an objective, the system chooses steps itself.”</p></div>
+    <div class="pr"><h4>// AGENTFORGE → --adaptive</h4>
+      <p>The Lead plans the phase sequence, re-routes on outcomes, and self-checks the goal — instead of
+      running a static list.</p></div>
+  </div>
+</section>
+
+<section id="org">
+  <div class="kicker">⑤ Multi-agent, realized</div>
+  <h2>The agent org</h2>
+  <p>Agents never call each other directly — they publish to a priority <code>MessageBus</code>
+  (one mailbox per role). The Lead orchestrates; the Reviewer gates.</p>
+  <div class="org">
+    <div class="lead-node"><b>Lead — Mara</b><div class="muted" style="font-size:14px">plans · assigns · gates · handles escalations · runs the deploy gate</div></div>
+    <div class="workers">
+      <div class="worker"><div class="rn">product_manager</div><div class="nm">Priya</div><div class="ds">Requirements, stories, NFRs</div></div>
+      <div class="worker"><div class="rn">architect</div><div class="nm">Sol</div><div class="ds">Schema, API, security design</div></div>
+      <div class="worker"><div class="rn">backend_developer</div><div class="nm">Devon</div><div class="ds">Implementation + self-test</div></div>
+      <div class="worker"><div class="rn">qa_engineer</div><div class="nm">Quinn</div><div class="ds">pytest, phantom-import scan, reports</div></div>
+      <div class="worker"><div class="rn">devops_engineer</div><div class="nm">Ravi</div><div class="ds">Docker, CI, runbook</div></div>
+      <div class="worker"><div class="rn">data_engineer</div><div class="nm">Ines</div><div class="ds">Ingestion, contracts, ETL</div></div>
+      <div class="worker"><div class="rn">ml_engineer</div><div class="nm">Theo</div><div class="ds">Features, model, serving</div></div>
+    </div>
+    <div class="reviewer-node">⊘ Reviewer — independent gate · reads real files · approve / reject / escalate · silence ≠ approval</div>
+  </div>
+</section>
+
+<section id="looptools">
+  <div class="kicker">① ② The loop &amp; tools, realized</div>
+  <h2>One loop, composable tool belts</h2>
+  <p>Every agent shares <code>BaseAgent.run_tool_loop</code> — the multi-turn
+  <code>call → execute → observe</code> cycle. Capabilities are opt-in flags:</p>
+
+  <div class="code">
+    <div class="bar"><span class="fn">agents/base_agent.py — the loop, simplified</span><button class="copy">copy</button></div>
+<pre><span class="k">for</span> step <span class="k">in</span> range(max_steps):
+    messages = self._compact_messages(messages)            <span class="c"># context circuit breaker</span>
+    response = <span class="k">await</span> self._call_llm(messages, tools)   <span class="c"># decide</span>
+    tool_calls = self._extract_tool_calls(response)
+    <span class="k">if</span> <span class="k">not</span> tool_calls:
+        <span class="k">break</span>                                          <span class="c"># model says: done</span>
+    <span class="k">for</span> name, args <span class="k">in</span> tool_calls:
+        result = <span class="k">await</span> handlers[name](args)            <span class="c"># act</span>
+        messages.append(tool_result(result))               <span class="c"># observe → next turn</span></pre>
+  </div>
+
+  <div class="tabs" data-tabs>
+    <div class="tabbar">
+      <button class="active" data-tab="t-read">read_tools</button>
+      <button data-tab="t-exec">exec_tools</button>
+      <button data-tab="t-edit">edit_tools</button>
+      <button data-tab="t-mock">mock_tools</button>
+    </div>
+    <div class="tabpanel active" id="t-read"><p><code>read_file</code> · <code>list_files</code> · <code>grep_code</code> — inspect the codebase before changing it. Output is bounded so a worker can't pull an unbounded blob into context.</p></div>
+    <div class="tabpanel" id="t-exec"><p><code>run_tests</code> · <code>run_lint</code> — the <b>act → observe</b> loop. Runs only the profile's <code>verify_cmd</code>/<code>lint_cmd</code>, never an arbitrary shell string the model invents.</p></div>
+    <div class="tabpanel" id="t-edit"><p><code>edit_file</code> — surgical anchored search/replace with a whitespace-tolerant fallback when the model's anchor drifts by indentation alone.</p></div>
+    <div class="tabpanel" id="t-mock"><p><code>generate_mock_data</code> — deterministic synthetic CSV/JSON/JSONL fixtures so Data/ML engineers test pipelines without production data.</p></div>
+  </div>
+
+  <div class="code">
+    <div class="bar"><span class="fn">enabling tools is one flag — capabilities compose</span><button class="copy">copy</button></div>
+<pre><span class="k">await</span> self.run_tool_loop(
+    user_message=brief,
+    tool_handlers={<span class="s">"write_file"</span>: write_handler},
+    read_tools=<span class="k">True</span>,    <span class="c"># inspect before patching</span>
+    exec_tools=<span class="k">True</span>,    <span class="c"># run_tests / run_lint (profile-fixed)</span>
+    edit_tools=<span class="k">True</span>,    <span class="c"># surgical edit_file</span>
+    mock_tools=<span class="k">True</span>,    <span class="c"># generate_mock_data fixtures</span>
+)</pre>
+  </div>
+  <div class="callout"><b>Grounding, concretely.</b> Before QA spends a test run,
+  <code>core/artifact_quality.phantom_imports</code> statically catches a hallucinated
+  <code>import</code> and triggers a targeted fix — a cheap reality check that saves a whole loop.</div>
+</section>
+
+<section id="adaptive">
+  <div class="kicker">③ Planning, realized</div>
+  <h2><code>--adaptive</code>: plan · re-route · self-check</h2>
+  <div class="split">
+    <div class="th"><h4>// THEORY</h4><p>“Write the recipe from the goal, then rewrite it when a step fails — within a budget.”</p></div>
+    <div class="pr"><h4>// AGENTFORGE</h4><p><code>lead._plan_phases</code> → <code>_replan_after_phase</code> → <code>_verify_goal_met</code>, each bounded by a replan budget and a hard phase cap.</p></div>
+  </div>
+  <div class="code">
+    <div class="bar"><span class="fn">agents/lead.py — re-route only on a real signal, only within budget</span><button class="copy">copy</button></div>
+<pre><span class="k">if</span> self._replan_budget &lt;= 0:
+    <span class="k">return</span> []                                   <span class="c"># out of budget → stay the course</span>
+<span class="k">if</span> <span class="k">not</span> (outcome[<span class="s">"quality_debt"</span>] <span class="k">or</span> outcome[<span class="s">"escalated"</span>]):
+    <span class="k">return</span> []                                   <span class="c"># no signal → no replanning</span>
+<span class="c"># otherwise: ask the Lead to insert ONE focused follow-up phase, then decrement the budget</span></pre>
+  </div>
+</section>
+
+<section id="context">
+  <div class="kicker">④ Memory, realized</div>
+  <h2>Bounding the context budget</h2>
+  <p>Two guards keep long adaptive loops from overflowing the window:</p>
+  <div class="code">
+    <div class="bar"><span class="fn">core/context.py — keep recent verbatim, condense the rest</span><button class="copy">copy</button></div>
+<pre><span class="k">def</span> <span class="f">rolling_state_block</span>(entries, *, max_chars=4000, keep_recent=12):
+    recent = items[len(items) - keep_recent:]      <span class="c"># recency matters most</span>
+    <span class="c"># older entries are truncated behind a "[N earlier decisions condensed]" line</span>
+    <span class="k">return</span> packed_state_block</pre>
+  </div>
+  <div class="callout steel"><b>Circuit breaker.</b> Within a single loop, <code>BaseAgent._compact_messages</code>
+  drops the oldest <em>complete</em> tool exchanges (a sliding window preserving tool_use/tool_result
+  adjacency) once messages exceed <code>AGENTFORGE_CONTEXT_CHAR_BUDGET</code> — graceful degradation
+  instead of an overflow error.</div>
+</section>
+
+<section id="guards">
+  <div class="kicker">⑥ Guardrails, realized</div>
+  <h2>The brakes, by default</h2>
+  <div class="grid g2">
+    <div class="def"><div class="ic">trust</div><h4>Independent review</h4><p class="muted">Reviewer reads real files, returns a structured verdict. A missing verdict defaults to reject.</p></div>
+    <div class="def"><div class="ic">focus</div><h4>Scope lock + Known Gaps</h4><p class="muted">Out-of-scope finds → <code>reports/known_gaps.md</code>, deferred not absorbed.</p></div>
+    <div class="def"><div class="ic">ask</div><h4>Escalation safe-pause</h4><p class="muted"><code>AGENTFORGE_ESCALATION_TIMEOUT</code> — defers to the deploy gate if no operator answers.</p></div>
+    <div class="def"><div class="ic">ship</div><h4>Deploy gate</h4><p class="muted">verify → human go/no-go → commit. Commit opt-in; push never automatic.</p></div>
+  </div>
+  <div class="callout"><b>Brakes you can name:</b> replan budget · hard phase cap · revision cap (3, then
+  accept-with-debt) · context circuit breaker · profile-fixed execution (no arbitrary shell) ·
+  sandboxed file I/O (rejects <code>../</code> traversal) · diff-only re-reviews
+  (<code>core/diffs.unified_diff</code>).</div>
+</section>
+
+<section id="eval">
+  <div class="kicker">⑦ Evaluation, realized</div>
+  <h2>Two layers: deterministic tests + an LLM judge</h2>
+  <div class="split">
+    <div class="th"><h4>// THEORY</h4><p>“Deterministic tests check plumbing; a judge model scores whether the output is actually good.”</p></div>
+    <div class="pr"><h4>// AGENTFORGE</h4><p><code>tests/</code> (faked LLM, 250 deterministic) + <code>evals/judge.py</code> — an LLM-as-a-Judge that rubric-scores artifacts with a small model.</p></div>
+  </div>
+  <p>A scenario opts in by declaring a rubric; the judge's core is pure and the LLM call is injected,
+  so CI stays deterministic. Run it with <code>run_evals.py --judge</code>:</p>
+  <div class="code">
+    <div class="bar"><span class="fn">evals/scenarios/intake_requirements.yaml — rubric (excerpt)</span><button class="copy">copy</button></div>
+<pre>judge_target: docs/requirements.md
+judge_threshold: <span class="s">0.7</span>          <span class="c"># pass if weighted score &gt;= 0.7</span>
+rubric:
+  - key: completeness
+    description: All mandatory sections are present and substantive.
+    weight: <span class="s">2</span>
+  - key: clarity
+    description: Requirements are specific and testable.</pre>
+  </div>
+  <div class="code">
+    <div class="bar"><span class="fn">bash — opt-in, costs tokens, non-deterministic</span><button class="copy">copy</button></div>
+<pre>export ANTHROPIC_API_KEY=sk-...          <span class="c"># or AGENTFORGE_LLM_PROVIDER=ollama</span>
+uv run python evals/run_evals.py --judge</pre>
+  </div>
+  <div class="callout steel"><b>Why this matters.</b> Without the judge, a refactor can keep all 250
+  tests green while quietly making the PM's requirements vaguer. The judge turns “is the prompt still
+  good?” into a tracked score — the bridge between deterministic plumbing and real output quality.</div>
+</section>
+
+<section id="modules">
+  <div class="kicker">Reference</div>
+  <h2>Where to read the source</h2>
+  <p>Start at the loop, then orchestration, then the gate, then the machinery:</p>
+  <ul>
+    <li><code>agents/base_agent.py</code> — the shared tool loop, tool handlers, context breaker.</li>
+    <li><code>agents/lead.py</code> — planning, re-routing, goal self-check, deploy gate, escalations.</li>
+    <li><code>agents/reviewer.py</code> — the independent gate (diff-only on adaptive revisions).</li>
+    <li><code>core/</code> — <code>phases</code>, <code>message_bus</code>, <code>artifact_store</code>,
+      <code>paths</code>, <code>profile</code>, <code>deploy</code>, <code>memory</code>,
+      <code>context</code>, <code>diffs</code>, <code>mockdata</code>, <code>artifact_quality</code>,
+      <code>hooks</code>, <code>events</code>.</li>
+  </ul>
+  <div class="callout steel">The living roadmap is <code>improvement.md</code>; the architecture
+  overview is <code>agent-forge-overview.md</code>; release notes are <code>CHANGELOG.md</code>.</div>
+  <label class="complete"><input type="checkbox" data-done="practice" /> Mark In AgentForge complete</label>
+</section>
+
+<div class="pager">
+  <a href="theory.html"><div class="dir">← Prev</div><div class="ti">Part 01 · Theory</div></a>
+  <a class="next" href="labs.html"><div class="dir">Next →</div><div class="ti">Part 03 · Labs</div></a>
+</div>
+
+<footer>
+  <div class="forge-rule" style="margin:0 0 22px"></div>
+  The Forge · <a href="agentic-systems.html">back to overview</a> ·
+  <a href="https://github.com/vgandhi1/agent-forge">source</a>
+</footer>
+</div>
+<script src="assets/forge.js"></script>
+</body>
+</html>

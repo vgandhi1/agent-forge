@@ -58,8 +58,9 @@ def build_prompt(profile: Profile, *, sprint_goal: str, data_content: str, req_c
         f"Task: {task_description}\n\n"
         f"First, inspect the repo and the data contracts: use read_file/list_files/grep_code to learn "
         f"the available validated features before modeling. Do NOT invent raw ingestion — consume the "
-        f"Data Engineer's contracts.\n\n"
-        f"Then deliver, writing each file with write_file under {profile.app_root}/ using {stack}:\n"
+        f"Data Engineer's contracts. For changes to files that already exist, prefer edit_file "
+        f"(surgical search/replace) over rewriting them; use write_file for new files.\n\n"
+        f"Then deliver, under {profile.app_root}/ using {stack}:\n"
         f"1. {_DESIGN_DOC} — problem framing (and the cost of a wrong prediction: false alarm vs missed "
         f"failure), feature definitions, a baseline + the chosen model, the evaluation plan (time-ordered "
         f"split, no leakage), the metrics that match the problem, and the key risks.\n"
@@ -68,7 +69,9 @@ def build_prompt(profile: Profile, *, sprint_goal: str, data_content: str, req_c
         f"against a baseline, and saves a model artifact.\n"
         f"4. An inference/serving module that validates inputs against the data contract and handles "
         f"missing / out-of-range values explicitly.\n"
-        f"5. A test proving the evaluation is reproducible and serving rejects malformed input.\n\n"
+        f"5. A test proving the evaluation is reproducible and serving rejects malformed input — "
+        f"use generate_mock_data to create a standardized dummy feature dataset for local "
+        f"train/eval/serving tests instead of relying on production data.\n\n"
         f"Fit transforms on train only, reuse the exact features at serving, and tune the decision "
         f"threshold to the failure mode. After writing, call run_tests to execute the evaluation/serving "
         f"tests — read any failures, fix the cause, and run_tests again until green (or you have done all "
@@ -130,7 +133,13 @@ class MLEngineerAgent(BaseAgent):
             max_steps=30,
             read_tools=True,
             exec_tools=True,
+            edit_tools=True,
+            mock_tools=True,
         )
+
+        for edited in self._edited_files:
+            if edited not in written_files:
+                written_files.append(edited)
 
         if not written_files:
             fallback = "# ML Design\n\n[Generated — no files emitted]\n"
@@ -176,7 +185,8 @@ class MLEngineerAgent(BaseAgent):
             user_message=(
                 f"Revise the ML layer based on this feedback:\n{notes}\n\n"
                 f"Files already written:\n{files_summary}\n\n"
-                f"Write corrected files using write_file (one call per file), then call run_tests to "
+                f"For files that already exist, prefer edit_file (surgical search/replace) over a full "
+                f"rewrite; use write_file for new files. Then call run_tests to "
                 f"confirm the evaluation/serving passes. "
                 f"Reply without a tool call only when all fixes are written and verified."
             ),
@@ -186,7 +196,13 @@ class MLEngineerAgent(BaseAgent):
             max_steps=30,
             read_tools=True,
             exec_tools=True,
+            edit_tools=True,
+            mock_tools=True,
         )
+
+        for edited in self._edited_files:
+            if edited not in written_files:
+                written_files.append(edited)
 
         await self.bus.publish(Message(
             type=MessageType.TASK_COMPLETE,

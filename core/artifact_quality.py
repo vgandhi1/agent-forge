@@ -10,7 +10,9 @@ Pure functions only (no I/O) so they are unit-testable.
 """
 from __future__ import annotations
 
+import ast
 import re
+import sys
 
 # Spec documents we grade for substance. Code and reports are out of scope (they have their
 # own verify step) — only the prose deliverables the architect/PM author.
@@ -77,3 +79,51 @@ def thin_artifact_reason(path: str, content: str) -> str | None:
             return f"{placeholder}/{len(paras)} body paragraphs are deferred placeholders (no design)"
 
     return None
+
+
+# --- Phantom-import detection: catch hallucinated imports before a wasted pytest run ----------
+#
+# A weak model sometimes imports a package that does not exist (or was never declared), e.g.
+# `import langchain_helpers` in code that only has fastapi/sqlalchemy. Today that surfaces only as
+# an ImportError after a full pytest run. These pure helpers let the QA agent flag it statically,
+# up front, and route a targeted fix — saving an execution loop. Pure (no I/O) so they are
+# unit-testable; the caller supplies what is legitimately importable.
+
+# Python's own standard-library module names (3.10+). A constant frozenset — not file I/O.
+_STDLIB_MODULES = frozenset(sys.stdlib_module_names)
+
+
+def imported_modules(py_source: str) -> set[str]:
+    """Top-level module names imported by ``py_source`` (absolute imports only).
+
+    Relative imports (``from . import x``) resolve within the package and are skipped. Returns an
+    empty set when the source does not parse — surfacing syntax errors is pytest's job, not this
+    check's.
+    """
+    try:
+        tree = ast.parse(py_source)
+    except SyntaxError:
+        return set()
+    mods: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".", 1)[0]
+                if top:
+                    mods.add(top)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level and node.level > 0:
+                continue  # relative import — resolves inside the package
+            if node.module:
+                mods.add(node.module.split(".", 1)[0])
+    return mods
+
+
+def phantom_imports(py_source: str, known: set[str]) -> set[str]:
+    """Top-level imports that are neither stdlib nor in ``known``.
+
+    ``known`` should contain everything legitimately importable for the project: installed
+    third-party packages plus the project's own local top-level modules. Whatever remains is a
+    likely hallucinated import / phantom dependency that will ``ImportError`` at test time.
+    """
+    return {m for m in imported_modules(py_source) if m not in _STDLIB_MODULES and m not in known}

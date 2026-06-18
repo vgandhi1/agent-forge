@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import sys
 
+from core import artifact_quality
 from core.message_bus import MessageBus
 from core.message_types import Message, MessageType
 from core.artifact_store import ArtifactStore
@@ -94,6 +96,64 @@ class QAEngineerAgent(BaseAgent):
             if msg.type == MessageType.TASK_ASSIGN:
                 await self._handle_task(msg)
 
+    def _local_top_level(self, profile: Profile) -> set[str]:
+        """Top-level module/package names that belong to the project itself.
+
+        These are legitimately importable (the app package and its siblings), so they must not be
+        flagged as phantom. Collected from the code root and the app root.
+        """
+        ws = self.artifacts.WORKSPACE
+        names: set[str] = {profile.app_root.replace("\\", "/").split("/", 1)[0]}
+        for base in {ws, ws / profile.app_root}:
+            if not base.is_dir():
+                continue
+            for entry in base.iterdir():
+                if entry.is_dir() and not entry.name.startswith("."):
+                    names.add(entry.name)
+                elif entry.suffix == ".py":
+                    names.add(entry.stem)
+        names.discard("")
+        return names
+
+    async def _scan_phantom_imports(self, profile: Profile) -> dict[str, list[str]]:
+        """Statically flag imports that are neither stdlib, installed, nor local modules.
+
+        Catches hallucinated imports / phantom dependencies before a pytest run that would just
+        fail at import time. Conservative: a module is only reported if it is not local and
+        ``importlib.util.find_spec`` cannot locate it (i.e. it is genuinely not installed).
+        """
+        local = self._local_top_level(profile)
+        ws = self.artifacts.WORKSPACE
+        known = set(local)
+        findings: dict[str, list[str]] = {}
+
+        for path in self.artifacts.list_files(profile.app_root):
+            if path.suffix != ".py":
+                continue
+            try:
+                src = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            phantoms: list[str] = []
+            for mod in sorted(artifact_quality.phantom_imports(src, known)):
+                # find_spec only resolves the top-level name, so it never imports/executes
+                # package code — a cheap, side-effect-free availability check.
+                try:
+                    available = importlib.util.find_spec(mod) is not None
+                except (ImportError, ValueError):
+                    available = False
+                if available:
+                    known.add(mod)  # cache so we don't re-resolve across files
+                else:
+                    phantoms.append(mod)
+            if phantoms:
+                try:
+                    rel = str(path.relative_to(ws))
+                except ValueError:
+                    rel = str(path)
+                findings[rel] = phantoms
+        return findings
+
     async def _run_pytest(self) -> tuple[int, str]:
         root = self.artifacts.dailyease_root()
         if not root.is_dir():
@@ -161,6 +221,24 @@ class QAEngineerAgent(BaseAgent):
 
         written_files = await self._generate_tests(user_msg, context)
 
+        # Pre-pytest static check: catch hallucinated imports / phantom dependencies and route a
+        # targeted fix before spending a full pytest run that would only ImportError (critique #1
+        # follow-on; see improvement.md "phantom-import detection").
+        phantom = await self._scan_phantom_imports(profile)
+        if phantom:
+            total = sum(len(v) for v in phantom.values())
+            self.console.log(f"[yellow]QA[/yellow] {total} phantom import(s) detected before pytest")
+            listing = "\n".join(f"- {f}: {', '.join(mods)}" for f, mods in phantom.items())
+            fix_msg = (
+                "A static import check found references to modules that are neither in the "
+                "standard library, installed in this environment, nor local project modules — "
+                "they will fail at import time, so fix them before tests run:\n"
+                f"{listing}\n\n"
+                "For each: correct the import to the real module/package name, or remove it if "
+                "unused. Do not invent packages. Use write_file or edit_file to apply the fixes."
+            )
+            written_files.extend(await self._generate_tests(fix_msg, context))
+
         exit_code, pytest_out = await self._run_pytest()
         self.console.log(f"[yellow]QA[/yellow] pytest exit={exit_code}")
 
@@ -221,7 +299,11 @@ class QAEngineerAgent(BaseAgent):
             tools=_TOOLS,
             max_steps=24,
             read_tools=True,
+            edit_tools=True,
         )
+        for edited in self._edited_files:
+            if edited not in written_files:
+                written_files.append(edited)
         return written_files
 
     async def _revise(self, notes: str, original_msg: Message, primary_path: str) -> None:

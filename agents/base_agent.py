@@ -500,6 +500,135 @@ _RUN_LINT_TOOL = {
 
 _EXEC_TOOLS = [_RUN_TESTS_TOOL, _RUN_LINT_TOOL]
 
+# --- Data mocking: generate standardized dummy datasets for local pipeline/model testing --------
+#
+# Data/ML engineers need fixtures to exercise pipelines and feature/serving code without production
+# data. This tool turns a simple column schema into a deterministic dataset file (seeded), written
+# through the sandboxed artifact store. It is for TEST fixtures only — not for fabricating data that
+# would be delivered as real.
+_GENERATE_MOCK_DATA_TOOL = {
+    "name": "generate_mock_data",
+    "description": (
+        "Generate a STANDARDIZED synthetic dataset file to test pipelines or models locally "
+        "without production data. Provide 'columns' (each {name, type}) where type is one of "
+        "int, float, bool, timestamp, category, id, string — with optional min/max (numeric), "
+        "values (category list), precision (float), unit. Also give 'rows' and an optional 'seed' "
+        "(data is deterministic per seed). Writes a csv/json/jsonl fixture into the project. Use "
+        "this only for test fixtures, never to fabricate data delivered as real."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Path relative to the code root for the fixture file"},
+            "format": {"type": "string", "enum": ["csv", "json", "jsonl"], "description": "Output format (default csv)"},
+            "rows": {"type": "integer", "description": "Number of rows (default 20; capped at 1000)"},
+            "seed": {"type": "integer", "description": "Seed for deterministic output (default 0)"},
+            "columns": {
+                "type": "array",
+                "description": "Column schema; each item {name, type, [min,max,values,precision,unit]}",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "type": {"type": "string"},
+                        "min": {"type": "number"},
+                        "max": {"type": "number"},
+                        "values": {"type": "array", "items": {"type": "string"}},
+                        "precision": {"type": "integer"},
+                        "unit": {"type": "string"},
+                    },
+                    "required": ["name", "type"],
+                },
+            },
+        },
+        "required": ["path", "columns"],
+    },
+}
+
+# --- Patch-based edit: surgical, anchored search/replace instead of full-file rewrite -------
+#
+# On a real --target-repo, rewriting a whole file with write_file is brittle (risks clobbering
+# unrelated code) and token-heavy. edit_file replaces an exact, unique snippet so agents make
+# minimal, reviewable changes. Path validation and the code-root sandbox are reused from the
+# artifact store (the write goes through ArtifactStore.write), so this cannot escape the root.
+_EDIT_FILE_TOOL = {
+    "name": "edit_file",
+    "description": (
+        "Make a SURGICAL edit to an EXISTING file by replacing an exact snippet — prefer this over "
+        "write_file for changes to files that already exist (it is safer and far cheaper than a full "
+        "rewrite). Provide old_string: an exact snippet currently in the file, with enough "
+        "surrounding context that it appears EXACTLY ONCE; and new_string: the replacement (use an "
+        "empty string to delete the snippet). Fails if old_string is missing or not unique, unless "
+        "replace_all is true. Read the file first (read_file) and copy the snippet verbatim, "
+        "including indentation. To create a brand-new file, use write_file instead."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Path relative to the code root of the file to edit"},
+            "old_string": {
+                "type": "string",
+                "description": "Exact text to replace, copied verbatim incl. whitespace; must be unique unless replace_all",
+            },
+            "new_string": {
+                "type": "string",
+                "description": "Replacement text (empty string deletes the matched snippet)",
+            },
+            "replace_all": {
+                "type": "boolean",
+                "description": "Replace every occurrence instead of requiring a unique match (default false)",
+            },
+        },
+        "required": ["path", "old_string", "new_string"],
+    },
+}
+
+# A file at/under this many lines is small enough that, when an anchored edit can't be located,
+# rewriting it wholesale with write_file is the cheaper recovery than re-anchoring.
+_EDIT_SMALL_FILE_LINES = 150
+
+
+def _whitespace_tolerant_replace(content: str, old: str, new: str) -> tuple[str, str | None]:
+    """Whitespace-tolerant, line-aligned fallback for ``edit_file`` when the exact anchor misses.
+
+    LLMs frequently reproduce a snippet with the right *content* but slightly wrong leading
+    indentation or trailing whitespace, so the exact substring match fails even though the target
+    is unambiguous. This retries by comparing whole lines via their ``strip()``-ed form and, on a
+    single contiguous match, splices ``new`` in at that span.
+
+    Returns ``(status, new_content)`` where ``status`` is ``"ok"`` (with new content),
+    ``"ambiguous"`` (matches more than one span — caller must disambiguate), or ``"none"``
+    (no line-aligned match; caller falls through to the not-found path). Deliberately line-aligned
+    so it can only recover from whitespace drift, never match unrelated mid-line text.
+    """
+    old_lines = old.splitlines()
+    norm_old = [ln.strip() for ln in old_lines]
+    # An all-blank or empty anchor would match anywhere; refuse to guess.
+    if not norm_old or not any(norm_old):
+        return ("none", None)
+
+    content_lines = content.splitlines(keepends=True)
+    n = len(norm_old)
+    matches = [
+        i
+        for i in range(0, len(content_lines) - n + 1)
+        if [w.strip() for w in content_lines[i:i + n]] == norm_old
+    ]
+    if not matches:
+        return ("none", None)
+    if len(matches) > 1:
+        return ("ambiguous", None)
+
+    i = matches[0]
+    matched_block = "".join(content_lines[i:i + n])
+    replacement = new
+    # Keep line boundaries intact: if the matched span ended in a newline but the replacement
+    # doesn't, re-add it so we don't fuse the following line onto the edit.
+    if matched_block.endswith("\n") and not replacement.endswith("\n"):
+        replacement += "\n"
+    new_content = "".join(content_lines[:i]) + replacement + "".join(content_lines[i + n:])
+    return ("ok", new_content)
+
 
 _SCOPE_LOCK_NOTE = (
     "\n\nScope lock: do exactly this task — no more. If you find anything outside its scope "
@@ -545,7 +674,44 @@ class BaseAgent(ABC):
         self.console = console
         self._system_prompt = SYSTEM_PROMPTS[role]
         self._escalation_count = 0
+        # Full paths edited via the edit_file tool during the most recent edit-enabled tool loop.
+        # Reset at the start of each run_tool_loop(edit_tools=True); builders merge it into the
+        # set of changed files they report to the Lead.
+        self._edited_files: list[str] = []
+        # Context-decay guards (overridable in tests):
+        #  - _decisions_budget_chars bounds the replayed decisions log in _build_dynamic_context.
+        #  - _context_char_budget is the circuit breaker for a single tool loop's running messages;
+        #    when exceeded we drop the oldest complete tool exchanges (sliding window) BEFORE the
+        #    next LLM call rather than letting the call fail on a blown context window.
+        self._decisions_budget_chars = int(os.getenv("AGENTFORGE_DECISIONS_BUDGET_CHARS", "4000"))
+        self._context_char_budget = int(os.getenv("AGENTFORGE_CONTEXT_CHAR_BUDGET", "120000"))
         bus.register(role)
+
+    @staticmethod
+    def _messages_size(messages: list[Any]) -> int:
+        """Rough character size of a running message list (content may be str or block objects)."""
+        return sum(len(str(m.get("content", ""))) for m in messages)
+
+    def _compact_messages(
+        self, messages: list[Any], initial_len: int
+    ) -> tuple[list[Any], int]:
+        """Sliding-window circuit breaker: drop the oldest complete tool exchanges when over budget.
+
+        Each tool-loop iteration appends exactly one ``(assistant, user/tool_result)`` pair after the
+        ``initial_len`` seed messages, so dropping whole pairs from the front of that tail preserves
+        role alternation and tool_use/tool_result adjacency (Anthropic) while keeping the seed brief
+        and the most recent turns. Returns ``(messages, dropped_pairs)``.
+        """
+        if self._messages_size(messages) <= self._context_char_budget:
+            return messages, 0
+        head = messages[:initial_len]
+        tail = messages[initial_len:]
+        dropped = 0
+        # Keep at least the most recent pair so the model still sees the latest tool result.
+        while len(tail) > 2 and self._messages_size(head + tail) > self._context_char_budget:
+            tail = tail[2:]
+            dropped += 1
+        return head + tail, dropped
 
     async def _call_llm(
         self,
@@ -750,6 +916,7 @@ class BaseAgent(ABC):
 
     async def _build_dynamic_context(self) -> str:
         from core.context_hygiene import sanitize_decisions
+        from core.context import rolling_state_block
 
         # Strip AgentForge's own runtime/config (model, Ollama/WSL host, provider) from the
         # replayed decisions so it cannot bleed into a worker's brief and into the product (F4).
@@ -757,9 +924,11 @@ class BaseAgent(ABC):
         artifacts = await self.memory.recall_all("artifact_ref")
         parts: list[str] = []
         if decisions:
+            # Bound the replayed decisions log: keep recent entries verbatim and condense older
+            # ones so long adaptive runs don't exhaust the context window (context-decay guard).
             parts.append(
                 "## Sprint Decisions\n"
-                + "\n".join(f"- {k}: {v}" for k, v in decisions.items())
+                + rolling_state_block(decisions, max_chars=self._decisions_budget_chars)
             )
         if artifacts:
             parts.append(
@@ -922,6 +1091,117 @@ class BaseAgent(ABC):
             tail = tail[-4000:]
         return f"[{status}] `{' '.join(profile.lint_cmd)}`\n{tail or '(no output)'}"
 
+    async def _edit_file_handler(self, tool_input: dict) -> str:
+        """Apply an anchored search/replace to an existing file (patch-based edit).
+
+        Safer/cheaper than a full rewrite: the model supplies an exact snippet (``old_string``)
+        and its replacement (``new_string``). We require the snippet to exist and be unique
+        (unless ``replace_all``), then write back through ``ArtifactStore.write`` so the existing
+        path validation / code-root sandbox applies. Failures return an actionable message rather
+        than raising, so the agent can correct and retry within the loop.
+        """
+        path = (tool_input.get("path") or "").strip()
+        old = tool_input.get("old_string", "")
+        new = tool_input.get("new_string", "")
+        replace_all = bool(tool_input.get("replace_all", False))
+
+        if not path:
+            return "[edit_file error: 'path' is required]"
+        if not isinstance(old, str) or not isinstance(new, str):
+            return "[edit_file error: 'old_string' and 'new_string' must be strings]"
+        if old == "":
+            return ("[edit_file error: 'old_string' must be non-empty. "
+                    "To create a new file, use write_file instead.]")
+        if old == new:
+            return "[edit_file error: 'old_string' and 'new_string' are identical — nothing to change.]"
+
+        content = await self.artifacts.read(path)
+        if content.startswith("[File not found:") or content.startswith("[Access denied:"):
+            return (f"[edit_file error: cannot edit {path}: {content.strip()} "
+                    f"Use write_file to create a new file, or fix the path.]")
+
+        count = content.count(old)
+        mode = "exact"
+        if count == 0:
+            # Fallback ladder: the exact anchor missed — most often just indentation / trailing-
+            # whitespace drift, not a real content change. Retry with a whitespace-tolerant,
+            # line-aligned match before giving up.
+            status, fb_content = _whitespace_tolerant_replace(content, old, new)
+            if status == "ambiguous":
+                return (f"[edit_file error: old_string matches multiple locations in {path} when "
+                        f"ignoring whitespace; add surrounding lines to disambiguate, or set "
+                        f"replace_all=true.]")
+            if status != "ok" or fb_content is None:
+                # Final rung: point the agent at the cheapest recovery for this file's size.
+                n_lines = content.count("\n") + 1
+                if n_lines <= _EDIT_SMALL_FILE_LINES:
+                    hint = (f"this file is small ({n_lines} lines) — you may rewrite it wholesale "
+                            f"with write_file instead")
+                else:
+                    hint = ("call read_file and copy a larger, exact snippet (including "
+                            "whitespace/indentation), then try again")
+                return f"[edit_file error: old_string not found in {path}; {hint}.]"
+            new_content = fb_content
+            mode = "whitespace-tolerant"
+            replaced = 1
+        else:
+            if count > 1 and not replace_all:
+                return (f"[edit_file error: old_string occurs {count} times in {path}; it must match "
+                        f"exactly once. Add surrounding lines to make it unique, or set replace_all=true.]")
+            new_content = content.replace(old, new) if replace_all else content.replace(old, new, 1)
+            replaced = count if replace_all else 1
+
+        try:
+            full_path = await self.artifacts.write(path, new_content)
+        except ValueError as e:
+            # Path traversal / outside-root attempts are rejected by the artifact store.
+            return f"[edit_file error: {e}]"
+
+        await self.memory.remember(f"edited_{path}", str(full_path), "artifact_ref")
+        self._edited_files.append(str(full_path))
+        self.console.log(f"[cyan]{self.role}[/cyan] edited: {full_path} ({replaced} replacement(s), {mode})")
+        note = "" if mode == "exact" else " (matched ignoring whitespace)"
+        return f"Edited {path}: replaced {replaced} occurrence(s){note}; file is now {len(new_content)} bytes."
+
+    async def _generate_mock_data_handler(self, tool_input: dict) -> str:
+        """Generate a deterministic synthetic dataset fixture and write it through the sandbox."""
+        from core import mockdata
+
+        path = (tool_input.get("path") or "").strip()
+        if not path:
+            return "[generate_mock_data error: 'path' is required]"
+        columns = tool_input.get("columns")
+        if not isinstance(columns, list) or not columns:
+            return "[generate_mock_data error: 'columns' must be a non-empty list of {name, type}]"
+        named = [c for c in columns if isinstance(c, dict) and str(c.get("name", "")).strip()]
+        if not named:
+            return "[generate_mock_data error: no columns with a 'name']"
+
+        fmt = str(tool_input.get("format", "csv")).lower()
+        if fmt not in ("csv", "json", "jsonl"):
+            fmt = "csv"
+        try:
+            rows = int(tool_input.get("rows", 20))
+        except (TypeError, ValueError):
+            rows = 20
+        try:
+            seed = int(tool_input.get("seed", 0))
+        except (TypeError, ValueError):
+            seed = 0
+
+        data = mockdata.generate_rows(named, rows, seed=seed)
+        content = mockdata.render(data, fmt, named)
+        try:
+            full_path = await self.artifacts.write(path, content)
+        except ValueError as e:
+            # Path traversal / outside-root attempts are rejected by the artifact store.
+            return f"[generate_mock_data error: {e}]"
+
+        await self.memory.remember(f"mockdata_{path}", str(full_path), "artifact_ref")
+        self._edited_files.append(str(full_path))
+        self.console.log(f"[cyan]{self.role}[/cyan] generated mock data: {full_path} ({len(data)} rows, {fmt})")
+        return f"Generated {len(data)} rows of mock data → {path} ({fmt}, {len(content)} bytes)."
+
     async def run_tool_loop(
         self,
         user_message: str,
@@ -932,6 +1212,8 @@ class BaseAgent(ABC):
         scope_lock: bool = True,
         read_tools: bool = False,
         exec_tools: bool = False,
+        edit_tools: bool = False,
+        mock_tools: bool = False,
     ) -> dict[str, Any]:
         """Multi-turn agentic loop: call → execute tools → feed results back → repeat.
 
@@ -952,10 +1234,23 @@ class BaseAgent(ABC):
         execute the project's configured verify/lint commands and iterate on real failures
         (the act→observe loop). Only profile-configured commands run — never arbitrary shell.
 
-        Returns ``{"final_text", "tool_calls", "results", "steps", "stop"}``.
+        When ``edit_tools`` is true, ``edit_file`` is injected so agents make surgical, anchored
+        edits to existing files instead of rewriting them whole. ``self._edited_files`` is reset
+        at the start of the loop and accumulates the paths edited, so callers can fold them into
+        the set of changed files they report.
+
+        When ``mock_tools`` is true, ``generate_mock_data`` is injected so Data/ML engineers can
+        generate standardized dummy datasets to test pipelines locally without production data.
+        Generated fixture paths also accumulate in ``self._edited_files``.
+
+        Returns ``{"final_text", "tool_calls", "results", "steps", "stop", "compacted_pairs"}``.
         """
         effective_tools = list(tools or [])
         handlers = dict(tool_handlers)
+        # Both edit_file and generate_mock_data record written paths in _edited_files; reset once
+        # at the start of the loop so callers see only this loop's changes.
+        if edit_tools or mock_tools:
+            self._edited_files = []
         if read_tools:
             for tool_def in _READ_TOOLS:
                 if not any(t.get("name") == tool_def["name"] for t in effective_tools):
@@ -969,6 +1264,14 @@ class BaseAgent(ABC):
                     effective_tools.append(tool_def)
             handlers.setdefault("run_tests", self._run_tests_handler)
             handlers.setdefault("run_lint", self._run_lint_handler)
+        if edit_tools:
+            if not any(t.get("name") == _EDIT_FILE_TOOL["name"] for t in effective_tools):
+                effective_tools.append(_EDIT_FILE_TOOL)
+            handlers.setdefault("edit_file", self._edit_file_handler)
+        if mock_tools:
+            if not any(t.get("name") == _GENERATE_MOCK_DATA_TOOL["name"] for t in effective_tools):
+                effective_tools.append(_GENERATE_MOCK_DATA_TOOL)
+            handlers.setdefault("generate_mock_data", self._generate_mock_data_handler)
         if scope_lock:
             if not any(t.get("name") == "log_known_gap" for t in effective_tools):
                 effective_tools.append(_LOG_KNOWN_GAP_TOOL)
@@ -985,14 +1288,31 @@ class BaseAgent(ABC):
             messages: list[Any] = self._ollama_initial_messages(user_message, dynamic_context)
         else:
             messages = self._anthropic_initial_messages(user_message, dynamic_context)
+        initial_len = len(messages)
 
         all_calls: list[tuple[str, dict]] = []
         results: list[tuple[str, dict, str]] = []
         text_parts: list[str] = []
         stop = "max_steps"
         step = 0
+        compacted_pairs = 0
 
         for step in range(max_steps):
+            # Context-decay circuit breaker: trim the oldest tool exchanges before the call so a
+            # long loop degrades gracefully instead of failing on an overflowed context window.
+            messages, dropped = self._compact_messages(messages, initial_len)
+            if dropped:
+                compacted_pairs += dropped
+                _log.warning("context_compacted role=%s dropped_pairs=%s step=%s", self.role, dropped, step)
+                emit("context_compacted", role=self.role, dropped_pairs=dropped, step=step)
+                if compacted_pairs == dropped:  # first compaction in this loop — record once
+                    await self.memory.remember(
+                        f"context_compacted_{self.role}",
+                        f"trimmed {dropped} oldest tool exchange(s) at step {step} to stay within the "
+                        f"context budget; relying on recent turns + the decisions log",
+                        "decision",
+                    )
+
             if is_ollama:
                 response = await self._ollama_create(messages, tools)
             else:
@@ -1067,6 +1387,7 @@ class BaseAgent(ABC):
             "results": results,
             "steps": step + 1,
             "stop": stop,
+            "compacted_pairs": compacted_pairs,
         }
 
     @abstractmethod

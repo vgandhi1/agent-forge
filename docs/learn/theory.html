@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Theory — Agentic Systems · The Forge</title>
+<meta name="description" content="The theory of agentic systems: the perceive-act-observe loop, tool use, planning, memory, multi-agent orgs, and guardrails." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800;900&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/forge.css" />
+</head>
+<body data-page="theory">
+<div id="progress"></div>
+<div class="topbar"><div class="topwrap">
+  <a class="brand" href="agentic-systems.html"><span class="mark">AF</span>
+    <span><b>The Forge</b><small>Agentic Systems</small></span></a>
+  <nav class="tabsnav">
+    <a href="agentic-systems.html">Home</a>
+    <a href="theory.html" class="active">Theory</a>
+    <a href="practice.html">In AgentForge</a>
+    <a href="labs.html">Labs</a>
+    <a href="quiz.html">Quiz</a>
+  </nav>
+  <div class="ring-mini">
+    <svg width="40" height="40" viewBox="0 0 46 46" aria-hidden="true">
+      <circle cx="23" cy="23" r="19" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="5"/>
+      <circle id="ring" cx="23" cy="23" r="19" fill="none" stroke="url(#rg)" stroke-width="5"
+        stroke-linecap="round" stroke-dasharray="119.4" stroke-dashoffset="119.4" transform="rotate(-90 23 23)"/>
+      <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ff6a1a"/><stop offset="1" stop-color="#ffb04a"/></linearGradient></defs>
+    </svg>
+    <div class="rt">done<b id="pct">0%</b></div>
+  </div>
+</div></div>
+
+<div class="wrap">
+<header class="phead">
+  <div class="eyebrow">Part 01 · Theory</div>
+  <h1>The <span class="gl">theory</span> of agentic systems</h1>
+  <p class="lede">Seven ideas, framework-agnostic. Each one becomes concrete in
+  <a href="practice.html">Part 02 · In AgentForge</a>.</p>
+  <div class="jump">
+    <a href="#loop">① The loop</a>
+    <a href="#tools">② Tool use</a>
+    <a href="#planning">③ Planning</a>
+    <a href="#memory">④ Memory</a>
+    <a href="#multiagent">⑤ Multi-agent</a>
+    <a href="#guardrails">⑥ Guardrails</a>
+    <a href="#eval">⑦ Evaluation</a>
+  </div>
+</header>
+
+<section id="loop">
+  <div class="kicker">① The core loop</div>
+  <h2>The loop is the engine</h2>
+  <p class="lead">Strip an agent to its core and you get a turn-based loop. The model proposes an action
+  (usually a tool call); the runtime executes it; the result is fed back; repeat. Step through one
+  agent fixing a failing test:</p>
+
+  <div class="sim" id="sim">
+    <div class="loopviz">
+      <div class="node" data-node="0"><div class="nh">Perceive</div><div class="nb">Read state</div></div>
+      <div class="node" data-node="1"><div class="nh">Decide</div><div class="nb">Plan action</div></div>
+      <div class="node" data-node="2"><div class="nh">Act</div><div class="nb">Call tool</div></div>
+      <div class="node" data-node="3"><div class="nh">Observe</div><div class="nb">Read result</div></div>
+    </div>
+    <div class="log" id="simlog">// press “Step the loop” to watch an agent fix a failing test…</div>
+    <div class="controls">
+      <button class="btn primary" id="simStep">▶ Step the loop</button>
+      <button class="btn" id="simReset">↺ Reset</button>
+      <span class="chip" style="margin-left:auto">turn <b id="simTurn">0</b></span>
+    </div>
+  </div>
+
+  <div class="callout steel"><b>Why turns matter.</b> A single model call can't both write ten files and
+  verify them. The loop lets a model complete a large job <em>across</em> calls — write, observe,
+  continue. Without it you have a one-shot generator, not an agent.</div>
+</section>
+
+<section id="tools">
+  <div class="kicker">② Tool use &amp; grounding</div>
+  <h2>Tools are the agent's hands</h2>
+  <p class="lead">An LLM alone only predicts text. <em>Tools</em> turn that text into action — and ground
+  the agent in reality so it can verify its own work instead of hallucinating success.</p>
+  <div class="grid g3">
+    <div class="def"><div class="ic">perceive</div><h4>Read tools</h4><p class="muted">Inspect the world: read files, list, search — before changing anything.</p></div>
+    <div class="def"><div class="ic">act</div><h4>Write / edit / run</h4><p class="muted">Change the world: write or surgically edit files, run the test suite.</p></div>
+    <div class="def"><div class="ic">verify</div><h4>Observe results</h4><p class="muted">Read tool output — a failing assertion, a lint error — and react.</p></div>
+  </div>
+  <div class="callout"><b>Grounding beats fluency.</b> The most common agent failure is confidently
+  reporting success it never verified. Tools that <em>run</em> and <em>read</em> the result are the
+  antidote: the agent must face reality each turn.</div>
+</section>
+
+<section id="planning">
+  <div class="kicker">③ Planning &amp; adaptive control</div>
+  <h2>Decide the steps, then revise them</h2>
+  <p class="lead">A fixed pipeline is a recipe. An agent writes its own recipe from the goal — then
+  rewrites it when a step fails. Three behaviours, each <strong>bounded</strong> so it can't spiral:</p>
+  <div class="grid g3">
+    <div class="def"><div class="ic">plan</div><h4>Propose</h4><p class="muted">Turn the goal into a sequence of steps.</p></div>
+    <div class="def"><div class="ic">re-route</div><h4>Adapt</h4><p class="muted">Insert a follow-up step when reality disagrees — within a budget.</p></div>
+    <div class="def"><div class="ic">verify</div><h4>Self-check</h4><p class="muted">Confirm the goal is actually met before declaring done.</p></div>
+  </div>
+  <div class="callout steel"><b>Bounded autonomy is the whole game.</b> Unbounded self-direction is how
+  agents burn money and loop. Budgets, caps, and a hard stop are what make autonomy shippable.</div>
+</section>
+
+<section id="memory">
+  <div class="kicker">④ Memory &amp; the context budget</div>
+  <h2>Working memory is finite — curate it</h2>
+  <p class="lead">An agent's working memory is its context window. Long loops drown in their own history
+  (the “lost in the middle” effect), so a production agent must decide what to carry forward.</p>
+  <div class="grid g2">
+    <div class="def"><div class="ic">persist</div><h4>Durable log</h4><p class="muted">Decisions and artifacts are stored outside the window and replayed selectively.</p></div>
+    <div class="def"><div class="ic">bound</div><h4>Rolling summary + circuit breaker</h4><p class="muted">Keep recent detail verbatim, condense the rest; drop the oldest exchanges before overflowing.</p></div>
+  </div>
+  <div class="callout"><b>Three tiers of memory.</b> <em>Working</em> (the live context window),
+  <em>episodic</em> (this run's decisions log), and <em>long-term</em> (across runs — vector retrieval,
+  still emerging). Good agents move information between tiers instead of cramming everything into one.</div>
+</section>
+
+<section id="multiagent">
+  <div class="kicker">⑤ Multi-agent orchestration</div>
+  <h2>From one agent to an org</h2>
+  <p class="lead">One agent juggling every concern loses focus. Splitting work across specialists — each
+  with its own persona, tools, and prompt — mirrors how human teams scale. A <em>Lead</em> coordinates;
+  an independent <em>Reviewer</em> audits so the builder can't grade its own homework.</p>
+  <p>Communication patterns you'll meet in agentic orgs:</p>
+  <ul>
+    <li><b>Blackboard / shared store</b> — agents read and write a shared artifact space, referenced by path.</li>
+    <li><b>Message bus</b> — agents publish to mailboxes instead of calling each other directly (loose coupling).</li>
+    <li><b>Request / response</b> — the orchestrator consults the reviewer synchronously at each gate.</li>
+    <li><b>Handoff + checkpoint</b> — durable handoffs make a long run resumable after a crash.</li>
+  </ul>
+  <div class="callout steel"><b>Independent review is a trust mechanism.</b> If the agent that wrote the
+  code also approves it, “done” means nothing. A separate reviewer that reads the real files — where
+  <em>silence ≠ approval</em> — is what makes multi-agent output trustworthy.</div>
+</section>
+
+<section id="guardrails">
+  <div class="kicker">⑥ Reliability &amp; guardrails</div>
+  <h2>Why production agents need brakes</h2>
+  <p class="lead">Autonomy without guardrails is a liability: agents over-reach scope, approve their own
+  work, hallucinate dependencies, and loop. Reliability is what turns a demo into a system you'd run
+  unattended.</p>
+  <div class="grid g2">
+    <div class="def"><div class="ic">focus</div><h4>Scope lock</h4><p class="muted">Out-of-scope findings are logged and deferred, not silently absorbed into the task.</p></div>
+    <div class="def"><div class="ic">ask</div><h4>Escalation + safe-pause</h4><p class="muted">Ambiguity routes to a human; if no one answers in time, it pauses safely instead of guessing.</p></div>
+    <div class="def"><div class="ic">ship</div><h4>Deploy gate</h4><p class="muted">verify → human go/no-go → commit. Nothing ships that doesn't pass the project's checks.</p></div>
+    <div class="def"><div class="ic">cap</div><h4>Budgets &amp; caps</h4><p class="muted">Replan budget, phase cap, revision cap, context breaker — the cost and safety brakes.</p></div>
+  </div>
+  <div class="callout"><b>One brake is missing from this list:</b> knowing the agent is actually
+  <em>good</em>. That's evaluation → keep reading.</div>
+</section>
+
+<section id="eval">
+  <div class="kicker">⑦ Evaluation</div>
+  <h2>How do you know it's working?</h2>
+  <p class="lead">An agent can pass every structural check and still be getting <em>worse</em>. The
+  hardest problem in agentic systems isn't building the loop — it's <strong>measuring quality</strong>
+  when outputs are open-ended and non-deterministic.</p>
+  <div class="grid g2">
+    <div class="def"><div class="ic">trap</div><h4>The evaluation disconnect</h4>
+      <p class="muted">Tests with <em>faked</em> model calls verify plumbing deterministically — but a
+      change can stay green while silently degrading the actual prompts. The fake never notices.</p></div>
+    <div class="def"><div class="ic">fix</div><h4>LLM-as-a-Judge</h4>
+      <p class="muted">Use a second, cheaper model to <em>grade</em> the artifact against an explicit
+      rubric (1–5 per criterion). Now prompt-quality regressions become a number you can track.</p></div>
+  </div>
+  <div class="callout steel"><b>Two layers, two questions.</b> <em>Deterministic tests</em> ask “do the
+  parts still work?” — fast, free, run on every commit. <em>Judge / live evals</em> ask “is the output
+  actually good?” — costly and noisy, so they run gated/nightly. You need both; neither replaces the
+  other.</div>
+  <div class="callout"><b>Next:</b> see all seven ideas realized in code →
+  <a href="practice.html">Part 02 · In AgentForge</a>.</div>
+  <label class="complete"><input type="checkbox" data-done="theory" /> Mark Theory complete</label>
+</section>
+
+<div class="pager">
+  <a href="agentic-systems.html"><div class="dir">← Prev</div><div class="ti">Home</div></a>
+  <a class="next" href="practice.html"><div class="dir">Next →</div><div class="ti">Part 02 · In AgentForge</div></a>
+</div>
+
+<footer>
+  <div class="forge-rule" style="margin:0 0 22px"></div>
+  The Forge · <a href="agentic-systems.html">back to overview</a> ·
+  <a href="https://github.com/vgandhi1/agent-forge">source</a>
+</footer>
+</div>
+<script src="assets/forge.js"></script>
+</body>
+</html>

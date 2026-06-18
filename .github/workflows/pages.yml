@@ -1,0 +1,46 @@
+name: Deploy learning module to GitHub Pages
+
+# Publishes the interactive learning module in docs/learn/ to GitHub Pages.
+# One-time setup: repo Settings → Pages → "Build and deployment" → Source = "GitHub Actions".
+# Site URL: https://vgandhi1.github.io/agent-forge/
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/learn/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; don't cancel an in-progress production deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload learning-module artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Only the self-contained static site is published.
+          path: docs/learn
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

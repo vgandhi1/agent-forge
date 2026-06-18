@@ -2,6 +2,86 @@
 
 Document **user-visible** changes (CLI flags, behavior, public docs, breaking renames of user-facing concepts). **Skip** entries for internal-only refactors—e.g. module/symbol renames or log identifiers that do not change how users run AgentForge.
 
+## Unreleased — LLM-as-a-Judge eval layer
+
+Closes the evaluation-disconnect gap: deterministic tests can't catch a silently degraded prompt that
+still emits structurally valid output. Additive and opt-in; full suite green: **250 passed, 1 skipped**
+(the new opt-in live smoke test).
+
+- **LLM-as-a-Judge.** `evals/judge.py` scores a produced artifact against an explicit **rubric** with a
+  small/cheap model (`AGENTFORGE_JUDGE_MODEL`, default `claude-3-5-haiku-latest`, or Ollama). The core
+  (`build_prompt`/`parse_verdict`/`weighted_score`) is pure and the LLM call is injected, so CI stays
+  deterministic. (`tests/test_judge.py`)
+- **`run_evals.py --judge`.** Scenarios can declare `rubric` / `judge_target` / `judge_threshold`;
+  `--judge` additionally grades rubric-bearing scenarios (against a fixture or `--workspace`). Default
+  runs are unchanged and deterministic. The `intake_requirements` scenario ships a sample rubric.
+- **Pytest `live` marker** + `AGENTFORGE_RUN_LIVE=1`-gated smoke test for the real provider; `evals/`
+  added to `pythonpath`. Docs: `docs/evaluation.md` gains an LLM-as-a-Judge section.
+
+## Unreleased — context-decay guards, escalation timeout, diff-only review, data mocking
+
+Architectural-critique follow-ons. All additive and backward compatible; full suite green:
+**237 passed**.
+
+- **Context-decay guards.** `core/context.rolling_state_block` bounds the replayed decisions log in
+  `_build_dynamic_context` (recent verbatim, older condensed). A tool-loop circuit breaker
+  (`BaseAgent._compact_messages`) drops the oldest complete tool exchanges — a sliding window that
+  preserves tool_use/tool_result adjacency — once the running messages exceed
+  `AGENTFORGE_CONTEXT_CHAR_BUDGET`, emitting `context_compacted` instead of overflowing the window.
+  (`tests/test_context_decay.py`)
+- **Escalation safe-pause timeout.** `AGENTFORGE_ESCALATION_TIMEOUT` (default 300s): if no operator
+  responds to a mid-sprint escalation, the Lead defers to the deploy gate instead of blocking
+  forever. (`agents/lead.py`; `tests/test_escalation_timeout.py`)
+- **Diff-only reviews.** On revision attempts in `--adaptive` mode the Reviewer is handed a bounded
+  unified diff of what changed (`core/diffs.py` + Lead snapshots) so it judges the fix instead of
+  re-reading whole files. (`agents/reviewer.py`; `tests/test_reviewer_diff.py`)
+- **Data-mocking tool.** `generate_mock_data` (`run_tool_loop(mock_tools=True)`, `core/mockdata.py`)
+  lets the Data/ML engineers generate deterministic, standardized dummy datasets (csv/json/jsonl) to
+  exercise pipelines and feature/serving code locally without production data.
+  (`tests/test_mockdata.py`)
+- **Docs.** Salvaged the scheduled-review/PR automation into `scripts/scheduled-review-pr.sh` +
+  `docs/scheduled-review.md`, and target-repo security notes into `docs/security.md` (consolidating
+  the former root review doc).
+
+## Unreleased — edit reliability + phantom-import detection
+
+Hardens two builder/QA behaviors from the architectural review. Additive and backward compatible;
+full suite green: **216 passed**.
+
+- **`edit_file` fallback ladder:** an exact-anchor miss now retries with a **whitespace-tolerant,
+  line-aligned** match (recovers from indentation / trailing-whitespace drift — the most common
+  anchor failure) and, on a true miss, returns size-aware guidance (rewrite small files wholesale
+  with `write_file`; re-anchor large ones). It still refuses to guess when more than one line-span
+  matches. (`agents/base_agent.py`; `tests/test_patch_edits.py`)
+- **Phantom-import detection (QA, pre-pytest):** before running tests, QA statically scans the app's
+  Python files for imports that are neither stdlib, installed, nor local modules — likely
+  hallucinated imports / phantom dependencies — and routes a **targeted fix before** a pytest run
+  that would only `ImportError`, saving an execution loop. Conservative (`importlib.util.find_spec`
+  confirms a module is genuinely missing before flagging). (`core/artifact_quality.py`,
+  `agents/qa_engineer.py`; `tests/test_phantom_imports.py`)
+
+## Unreleased — patch-based edits (`edit_file`)
+
+Builders can now make **surgical, anchored edits** to existing files instead of rewriting them
+whole. This is the safer, cheaper path for changes on a real `--target-repo`: a full-file
+`write_file` risks clobbering unrelated code and costs tokens proportional to file size, whereas
+`edit_file` touches only the matched snippet. Additive and backward compatible. Full suite green:
+**204 passed** (11 new in `tests/test_patch_edits.py`).
+
+- **`edit_file` tool:** an anchored search/replace — the agent supplies `old_string` (an exact,
+  unique snippet) and `new_string` (the replacement; empty deletes the snippet). The edit fails
+  with an actionable message (not an exception) when the snippet is missing or not unique, so the
+  agent can correct and retry inside its loop; `replace_all` handles intentional multi-site
+  changes. Injected via `run_tool_loop(edit_tools=True)`. (`agents/base_agent.py`)
+- **Wired into the builders:** Backend, Data Engineer, and ML Engineer now prefer `edit_file` for
+  changes to files that already exist (prompts updated) and reserve `write_file` for new files;
+  edited paths are folded into the set of changed files reported to the Lead.
+- **Security / safety:** the write goes through `ArtifactStore.write`, so the existing path
+  validation and code-root sandbox apply — traversal (`../…`) and out-of-root paths are rejected
+  before any read or write.
+- **Tests:** `tests/test_patch_edits.py` — unique replace, delete-via-empty, `replace_all`,
+  snippet-not-found, ambiguous-match, missing file, traversal blocked, and loop injection/reset.
+
 ## Unreleased — agentic core (planning, re-routing, execution feedback)
 
 Turns the orchestrator from a fixed-pipeline executor into an adaptive agent, and gives every

@@ -135,8 +135,44 @@ Current scenarios:
 | Resume | `--resume` with the same goal skips completed phases in `checkpoint.json` |
 | Quality debt | Flagged debt appears in the deploy summary (not a silent pass) |
 
+### LLM-as-a-Judge (prompt-quality grading)
+
+The deterministic tests use *faked* LLM calls — perfect for orchestrator plumbing, but blind to a
+silently degraded prompt that still emits structurally valid output. The judge closes that gap.
+
+`evals/judge.py` scores a produced artifact against an explicit **rubric** using a small, cheap model
+(`AGENTFORGE_JUDGE_MODEL`, default `claude-3-5-haiku-latest`, or an Ollama model). Its core is pure
+(`build_prompt` / `parse_verdict` / `weighted_score`) and unit-tested with a fake completer; the LLM
+call is injected, so CI stays deterministic.
+
+A scenario opts in by declaring a rubric:
+
+```yaml
+judge_target: docs/requirements.md     # artifact to grade (else first expected_artifact)
+judge_threshold: 0.7                    # pass if weighted score >= this (0..1)
+rubric:
+  - key: completeness
+    description: All mandatory sections are present and substantive.
+    weight: 2
+  - key: clarity
+    description: Requirements are specific and testable.
+```
+
+Run it (opt-in; costs tokens, non-deterministic — keep it out of the default CI path):
+
+```bash
+export ANTHROPIC_API_KEY=sk-...          # or AGENTFORGE_LLM_PROVIDER=ollama
+uv run python evals/run_evals.py --judge                 # grade fixtures
+uv run python evals/run_evals.py --judge --workspace workspace   # grade a real run
+```
+
+Scores normalise each 1–5 criterion to 0–1, weight them, and compare to the threshold. Tests:
+`tests/test_judge.py` (deterministic) plus one opt-in `@pytest.mark.live` smoke test gated behind
+`AGENTFORGE_RUN_LIVE=1`.
+
 ### What is deferred
 
-- **Live-LLM evals** (`live: true` scenarios) — run `main.py` and grade fresh output. Costly;
-  a nightly/optional CI job. Skipped by the current fixture-based runner.
-- The fixture-based suite above can ship before target-repo mode and live evals.
+- **Live pipeline evals** (`live: true` scenarios) — run `main.py` end-to-end and grade fresh output.
+  Costly; a nightly/optional CI job. The judge above grades *artifacts* (from fixtures or a real
+  `--workspace`) today; wiring it to a fresh `main.py` run is the remaining step.
+- A standard judged fixture set across more presets (`ml`/`factory`).

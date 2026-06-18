@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Labs — Hands-on with AgentForge · The Forge</title>
+<meta name="description" content="Six runnable CLI labs that map agentic concepts to real AgentForge commands." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800;900&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/forge.css" />
+</head>
+<body data-page="labs">
+<div id="progress"></div>
+<div class="topbar"><div class="topwrap">
+  <a class="brand" href="agentic-systems.html"><span class="mark">AF</span>
+    <span><b>The Forge</b><small>Agentic Systems</small></span></a>
+  <nav class="tabsnav">
+    <a href="agentic-systems.html">Home</a>
+    <a href="theory.html">Theory</a>
+    <a href="practice.html">In AgentForge</a>
+    <a href="labs.html" class="active">Labs</a>
+    <a href="quiz.html">Quiz</a>
+  </nav>
+  <div class="ring-mini">
+    <svg width="40" height="40" viewBox="0 0 46 46" aria-hidden="true">
+      <circle cx="23" cy="23" r="19" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="5"/>
+      <circle id="ring" cx="23" cy="23" r="19" fill="none" stroke="url(#rg)" stroke-width="5"
+        stroke-linecap="round" stroke-dasharray="119.4" stroke-dashoffset="119.4" transform="rotate(-90 23 23)"/>
+      <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ff6a1a"/><stop offset="1" stop-color="#ffb04a"/></linearGradient></defs>
+    </svg>
+    <div class="rt">done<b id="pct">0%</b></div>
+  </div>
+</div></div>
+
+<div class="wrap">
+<header class="phead">
+  <div class="eyebrow">Part 03 · Hands-on</div>
+  <h1>Run it <span class="gl">yourself</span></h1>
+  <p class="lede">Reading is half of it. Run these in order — each lab maps a concept to a real command.
+  Click any command to copy. Use <code>--dry-run</code> first to preview without API calls.</p>
+</header>
+
+<section id="setup">
+  <div class="lab">
+    <div class="lh"><span class="num">0</span><h4>Set up</h4></div>
+    <div class="goal">Install deps and confirm the toolchain. Pick a provider.</div>
+    <div class="code"><div class="bar"><span class="fn">bash</span><button class="copy">copy</button></div>
+<pre>cd agent-forge
+uv sync                                  <span class="c"># install</span>
+export ANTHROPIC_API_KEY=sk-...          <span class="c"># or: AGENTFORGE_LLM_PROVIDER=ollama</span>
+uv run python main.py --help</pre></div>
+  </div>
+
+  <div class="lab">
+    <div class="lh"><span class="num">1</span><h4>Preview a plan <span class="muted" style="font-size:13px">· Theory ③</span></h4></div>
+    <div class="goal">See the phases without spending a token — the planning surface, dry.</div>
+    <div class="code"><div class="bar"><span class="fn">bash</span><button class="copy">copy</button></div>
+<pre>uv run python main.py --preset full --adaptive --dry-run \
+  --goal <span class="s">"A REST API to track factory machine downtime"</span></pre></div>
+  </div>
+
+  <div class="lab">
+    <div class="lh"><span class="num">2</span><h4>Greenfield build <span class="muted" style="font-size:13px">· Theory ①②⑤</span></h4></div>
+    <div class="goal">Watch the full org run the loop end-to-end in the sandbox.</div>
+    <div class="code"><div class="bar"><span class="fn">bash</span><button class="copy">copy</button></div>
+<pre>uv run python main.py --preset full \
+  --goal <span class="s">"Build DailyEase task + habit tracking endpoints"</span>
+uv run python main.py --list-artifacts   <span class="c"># inspect what it produced</span></pre></div>
+  </div>
+
+  <div class="lab">
+    <div class="lh"><span class="num">3</span><h4>Operate on YOUR repo <span class="muted" style="font-size:13px">· Theory ②⑥</span></h4></div>
+    <div class="goal">Point it at an existing project and let it debug a failing test — grounded, gated.</div>
+    <div class="code"><div class="bar"><span class="fn">bash</span><button class="copy">copy</button></div>
+<pre>uv run python main.py --target-repo /path/to/app \
+  --preset debug --adaptive --strict-review \
+  --goal <span class="s">"Reproduce and fix the failing checkout test"</span></pre></div>
+  </div>
+
+  <div class="lab">
+    <div class="lh"><span class="num">4</span><h4>Factory data + AI <span class="muted" style="font-size:13px">· Theory ②④</span></h4></div>
+    <div class="goal">Run the data/ML team — the builders generate fixtures and self-verify.</div>
+    <div class="code"><div class="bar"><span class="fn">bash</span><button class="copy">copy</button></div>
+<pre>uv run python main.py --preset factory --adaptive \
+  --goal <span class="s">"Predictive-maintenance pipeline for pump vibration data"</span></pre></div>
+  </div>
+
+  <div class="lab">
+    <div class="lh"><span class="num">5</span><h4>Ship with the gate <span class="muted" style="font-size:13px">· Theory ⑥</span></h4></div>
+    <div class="goal">Turn on the deploy gate + commit-on-a-branch. Open <code>--web</code> for live progress.</div>
+    <div class="code"><div class="bar"><span class="fn">bash</span><button class="copy">copy</button></div>
+<pre>uv run python main.py --preset harden --deploy-gate \
+  --deploy-commit --deploy-branch agentforge/harden --web \
+  --goal <span class="s">"Production-readiness pass: tests, security, drift"</span></pre></div>
+  </div>
+
+  <div class="callout"><b>Watch the loop adapt.</b> Add <code>AGENTFORGE_JSON_LOG=1</code> to emit one JSON
+  event per line (<code>phase_complete</code>, <code>review_verdict</code>, <code>pytest_result</code>)
+  — the same stream the Web UI parses into live progress.</div>
+  <label class="complete"><input type="checkbox" data-done="labs" /> Mark Labs complete</label>
+</section>
+
+<div class="pager">
+  <a href="practice.html"><div class="dir">← Prev</div><div class="ti">Part 02 · In AgentForge</div></a>
+  <a class="next" href="quiz.html"><div class="dir">Next →</div><div class="ti">Part 04 · Quiz</div></a>
+</div>
+
+<footer>
+  <div class="forge-rule" style="margin:0 0 22px"></div>
+  The Forge · <a href="agentic-systems.html">back to overview</a> ·
+  <a href="https://github.com/vgandhi1/agent-forge">source</a>
+</footer>
+</div>
+<script src="assets/forge.js"></script>
+</body>
+</html>
