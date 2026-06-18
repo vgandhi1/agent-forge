@@ -33,7 +33,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure Pages
+        # enablement: true turns Pages on via the API if it isn't already configured,
+        # avoiding the "Get Pages site failed / Not Found" error on first run.
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload learning-module artifact
         uses: actions/upload-pages-artifact@v3
