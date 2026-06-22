@@ -55,6 +55,23 @@ def ollama_chat_origin() -> str:
     return validate_ollama_base_url(raw)
 
 
+def ollama_options() -> dict[str, Any]:
+    """Per-request Ollama ``options`` assembled from env.
+
+    ``AGENTFORGE_OLLAMA_NUM_GPU`` — number of layers to offload to GPU. Set to ``0`` to force
+    CPU inference, the reliable escape hatch when the GPU's ROCm/CUDA libraries are broken for the
+    card's arch (e.g. AMD gfx1103 missing ``rocblas`` TensileLibrary → HTTP 500 on /api/chat).
+    """
+    opts: dict[str, Any] = {}
+    num_gpu = os.getenv("AGENTFORGE_OLLAMA_NUM_GPU", "").strip()
+    if num_gpu:
+        try:
+            opts["num_gpu"] = int(num_gpu)
+        except ValueError:
+            pass
+    return opts
+
+
 def anthropic_tools_to_ollama(tools: list[dict]) -> list[dict]:
     out: list[dict] = []
     for t in tools:
@@ -763,6 +780,9 @@ class BaseAgent(ABC):
             "messages": ollama_messages,
             "stream": False,
         }
+        opts = ollama_options()
+        if opts:
+            body["options"] = opts
         if tools:
             body["tools"] = anthropic_tools_to_ollama(tools)
 

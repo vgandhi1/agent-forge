@@ -228,9 +228,17 @@ def _ollama_complete(prompt: str, model: str) -> str:
     base = validate_ollama_base_url(
         os.getenv("AGENTFORGE_OLLAMA_BASE_URL", "http://localhost:11434")
     )
+    body: dict = {"model": model, "messages": [{"role": "user", "content": prompt}], "stream": False}
+    # Force-CPU escape hatch (see base_agent.ollama_options): broken GPU ROCm/CUDA → 500.
+    num_gpu = os.getenv("AGENTFORGE_OLLAMA_NUM_GPU", "").strip()
+    if num_gpu:
+        try:
+            body["options"] = {"num_gpu": int(num_gpu)}
+        except ValueError:
+            pass
     resp = httpx.post(
         f"{base}/api/chat",
-        json={"model": model, "messages": [{"role": "user", "content": prompt}], "stream": False},
+        json=body,
         timeout=httpx.Timeout(120.0, connect=15.0),
     )
     resp.raise_for_status()
