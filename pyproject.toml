@@ -23,6 +23,16 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.25.0"]
+# Contract-revision POC (contracts/): binary-doc + flattened-PDF retitle tools.
+contracts = [
+    "python-docx>=1.1.0",
+    "python-pptx>=1.0.0",
+    "pymupdf>=1.24.0",
+    "opencv-python-headless>=4.9.0",
+    "numpy>=1.26.0",
+    "pillow>=10.0.0",
+    "pytesseract>=0.3.10",  # OCR readback of raster titles; needs the `tesseract` binary on PATH
+]
 
 [project.scripts]
 agentforge = "cli:main"
